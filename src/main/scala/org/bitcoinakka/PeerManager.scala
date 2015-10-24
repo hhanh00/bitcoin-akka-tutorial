@@ -4,9 +4,11 @@ import java.net.{InetAddress, InetSocketAddress}
 import java.sql.DriverManager
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.TimeoutException
 
 import com.typesafe.config.Config
 
+import scala.concurrent.{Promise, Future}
 import scala.concurrent.duration._
 import akka.actor._
 import akka.io.{IO, Tcp}
@@ -246,9 +248,156 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
   }
 }
 
+class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsImpl) {
+  private val log = LoggerFactory.getLogger(getClass)
+  import DownloadManager._
+  import concurrent.ExecutionContext.Implicits.global
+
+  def addPeer(peer: ActorRef) = {
+    d ! AddPeer(peer)
+  }
+
+  def create(syncPeer: ActorRef) = new SyncDataProvider {
+    override def getHeaders(locators: List[Hash]): Future[List[BlockHeader]] = internalGetHeaders(syncPeer)(locators)
+    override def downloadBlocks(hashes: List[HeaderSyncData]): Future[Unit] = internalDownloadBlocks(hashes)
+  }
+
+  def internalGetHeaders(syncPeer: ActorRef)(locators: List[Hash]): Future[List[BlockHeader]] = {
+    val p = Promise[Headers]()
+    context.actorOf(Props(new Actor {
+      context watch syncPeer
+      syncPeer ! GetHeaders(locators, zeroHash.array)
+
+      def receive: Receive = {
+        case headers: Headers =>
+          context unwatch syncPeer
+          context stop self
+          p.success(headers)
+        case Terminated(_) =>
+          p.failure(new TimeoutException())
+      }
+    }))
+
+    p.future.map(headers => headers.blockHeaders)
+  }
+
+  def internalDownloadBlocks(hashes: List[HeaderSyncData]): Future[Unit] = {
+    val p = Promise[Unit]()
+    d ! GetBlocks(hashes, p)
+    p.future
+  }
+
+  case class IdleState(peers: Set[ActorRef])
+  type IdleStateFunc = IdleState => IdleState
+  def addIdle(peer: ActorRef): IdleStateFunc = { s => s copy (peers = s.peers + peer) }
+  def removeIdle(peer: ActorRef): IdleStateFunc = { s => s copy (peers = s.peers - peer) }
+
+  case class DownloaderState(p: Promise[Unit], tasks: List[Task], hashToHSD: Map[WHash, HeaderSyncData], workerToHashes: Map[ActorRef, Set[WHash]]) {
+    def toStringLong() = s"(${tasks.map(t => t.map(h => hashToString(h.blockHeader.hash)))}, ${workerToHashes.map { case (a, hs) => a -> hs.map(h => hashToString(h.array))}})"
+    override def toString() = s"${tasks.size}, ${workerToHashes.map { case (a, hs) => a -> hs.size}}"
+  }
+  type DownloaderStateFunc = DownloaderState => DownloaderState
+  def add(peer: ActorRef): DownloaderStateFunc = { s => s copy (workerToHashes = s.workerToHashes.updated(peer, Set.empty)) }
+  def checkCompleted(self: ActorRef): DownloaderStateFunc = { s =>
+    if (s.tasks.isEmpty && s.workerToHashes.forall(_._2.isEmpty))
+      self ! DownloadFinished
+    s
+  }
+  def assignTask(self: ActorRef): DownloaderStateFunc = { s =>
+    (for {
+      task <- s.tasks.headOption
+      idleWorker <- s.workerToHashes.find(_._2.isEmpty).map(_._1)
+    } yield {
+        idleWorker.tell(Peer.GetBlocks(task), self)
+        s copy (tasks = s.tasks.tail, workerToHashes = s.workerToHashes.updated(idleWorker, task.map(hsd => hsd.blockHeader.hash.wrapped).toSet))
+      }) getOrElse s
+  }
+  def receiveBlock(peer: ActorRef, block: Block): DownloaderStateFunc = { s =>
+    val wHash = block.header.hash.wrapped
+    (for {
+      hashes <- s.workerToHashes.get(peer)
+    } yield {
+        val height = s.hashToHSD(wHash).height
+        // TODO: Save block -- blockStore.saveBlock(block, height)
+        s copy (workerToHashes = s.workerToHashes.updated(peer, hashes - wHash))
+      }) getOrElse s
+  }
+  def completeWorker(peer: ActorRef, self: ActorRef): DownloaderStateFunc = { s =>
+    (for {
+      hashes <- s.workerToHashes.get(peer)
+    } yield {
+        if (hashes.isEmpty) {
+          peer ! Peer.GetBlocksFinished
+          assignTask(self)(s)
+        }
+        else s
+      }) getOrElse s
+  }
+  def failWorker(peer: ActorRef): DownloaderStateFunc = { s =>
+    (for {
+      failedHashes <- s.workerToHashes.get(peer)
+    } yield {
+        val task = failedHashes.map(h => s.hashToHSD(h)).toList
+        s copy (tasks = if (task.isEmpty) s.tasks else task :: s.tasks, workerToHashes = s.workerToHashes - peer)
+      }) getOrElse s
+  }
+
+  val d = context.actorOf(Props(new Actor {
+    def receive = idleReceive(IdleState(Set.empty))
+    def idleReceive(state: IdleState): Receive = {
+      case GetBlocks(hsd, p) =>
+        val tasks = hsd.grouped(settings.batchSize).toList
+        val hashToHSD = hsd.map(h => h.blockHeader.hash.wrapped -> h).toMap
+
+        def internalReceive(state: DownloaderState): Receive = {
+          log.info(s"${state}")
+          checkCompleted(self)(state)
+
+          {
+            case AddPeer(peer) =>
+              log.info(s"Adding peer ${peer}")
+              context watch peer
+              context become internalReceive((add(peer) andThen assignTask(self))(state))
+
+            case block: Block =>
+              val peer = sender
+              context become internalReceive((receiveBlock(peer, block) andThen completeWorker(peer, self))(state))
+
+            case Terminated(peer) =>
+              log.info(s"Peer ${peer} terminated")
+              context become internalReceive((failWorker(peer) andThen assignTask(self))(state))
+
+            case DownloadFinished =>
+              state.p.success(())
+              context become idleReceive(IdleState(state.workerToHashes.keys.toSet))
+          }
+        }
+        val downloadState = DownloaderState(p, tasks, hashToHSD, state.peers.map(p => p -> Set.empty[WHash]).toMap)
+        val assignTaskToAll = state.peers.map(p => assignTask(self)).foldLeft(identity[DownloaderState] _)(_ andThen _)
+        context become internalReceive(assignTaskToAll(downloadState))
+
+      case AddPeer(peer) =>
+        log.info(s"Adding peer ${peer}")
+        context watch peer
+        context become idleReceive(addIdle(peer)(state))
+
+      case Terminated(peer) =>
+        log.info(s"Peer ${peer} terminated")
+        context become idleReceive(removeIdle(peer)(state))
+    }
+  }))
+}
+object DownloadManager {
+  case class AddPeer(peer: ActorRef)
+  case class GetBlocks(hashes: List[HeaderSyncData], p: Promise[Unit])
+  case object DownloadFinished
+  type Task = List[HeaderSyncData]
+}
+
 class AppSettingsImpl(config: Config) extends Extension {
   val targetConnectCount = config.getInt("targetConnectCount")
   val bitcoinDb = config.getString("bitcoinDb")
+  val batchSize = config.getInt("batchSize")
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings
