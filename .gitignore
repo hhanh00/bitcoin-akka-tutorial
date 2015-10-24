@@ -1,0 +1,9 @@
+.idea/
+*.log
+.cache
+.classpath
+consensus-jni.dll
+bin/
+target/
+*.orig
+
