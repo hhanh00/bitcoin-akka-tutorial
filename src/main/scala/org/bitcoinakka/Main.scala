@@ -4,7 +4,11 @@ import java.nio.ByteOrder
 
 import akka.util.ByteString
 
-case class MessageHeader(command: String, length: Int, checksum: Array[Byte], payload: ByteString)
+import scalaz.EphemeralStream
+
+case class MessageHeader(command: String, length: Int, checksum: Array[Byte], payload: ByteString) {
+  val totalLength = 24 + length
+}
 
 class MessageHandler {
   implicit val bo = ByteOrder.LITTLE_ENDIAN
@@ -28,5 +32,14 @@ class MessageHandler {
       }
       else None
     }
+  }
+
+  var buffer = ByteString.empty
+  def frame(data: ByteString): List[MessageHeader] = {
+    buffer ++= data
+
+    val messages = EphemeralStream.unfold(buffer)(parseMessageHeader).toList
+    buffer = buffer.drop(messages.map(_.totalLength).sum)
+    messages
   }
 }
