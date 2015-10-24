@@ -7,7 +7,7 @@ import org.bitcoinakka.BitcoinMessage._
 import org.slf4j.LoggerFactory
 import resource._
 
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 import scalaz.EphemeralStream
 
 case class HeaderSyncData(blockHeader: BlockHeader, height: Int, pow: BigInt)
@@ -24,7 +24,50 @@ trait SyncPersist {
 }
 
 trait Sync { self: SyncPersist =>
-  def synchronize(provider: SyncDataProvider): Future[Boolean]
+  private val log = LoggerFactory.getLogger(getClass)
+  implicit var blockchain: Blockchain = null
+  implicit val ec: ExecutionContext
+
+  def synchronize(provider: SyncDataProvider): Future[Boolean] = {
+    val f = for {
+      headers <- provider.getHeaders(blockchain.chainRev.take(10).map(_.blockHeader.hash))
+      headersSyncData = attachHeaders(headers)
+      _ <- Future.successful(()) if !headersSyncData.isEmpty
+      _ <- provider.downloadBlocks(headersSyncData.tail)
+    } yield {
+        updateMain(headersSyncData)
+        true
+      }
+
+    f recover {
+      case _: java.util.NoSuchElementException => false
+    }
+  }
+
+  private def attachHeaders(headers: List[BlockHeader]): List[HeaderSyncData] = {
+    headers match {
+      case Nil => Nil
+      case head :: _ =>
+        val anchor = blockchain.chainRev.find(sd => sd.blockHeader.hash.sameElements(head.prevHash))
+        anchor map { anchor =>
+          headers.scanLeft(anchor) { case (prev, h) =>
+            HeaderSyncData(h, prev.height+1, prev.pow+h.pow)
+          }
+        } getOrElse Nil
+    }
+  }
+
+  private def updateMain(chain: List[HeaderSyncData]) = {
+    chain match {
+      case anchor :: newChain =>
+        val chainRev = newChain.reverse ++ blockchain.chainRev.drop(blockchain.currentTip.height-anchor.height)
+        blockchain = blockchain copy (chainRev = chainRev.take(Consensus.difficultyAdjustmentInterval))
+        saveBlockchain(newChain)
+        setMainTip(blockchain.currentTip.blockHeader.hash)
+        log.info(s"Height = ${blockchain.currentTip.height}, POW = ${blockchain.currentTip.pow}")
+      case _ => assert(false)
+    }
+  }
 }
 
 trait SyncPersistDb extends SyncPersist {
