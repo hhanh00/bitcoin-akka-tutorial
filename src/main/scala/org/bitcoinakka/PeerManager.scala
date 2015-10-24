@@ -11,11 +11,12 @@ import org.slf4j.LoggerFactory
 class Peer(connection: ActorRef) extends FSM[Peer.State, Peer.Data] with ActorLogging {
   import Peer._
 
+  val messageHandler = context.actorOf(Props(new MessageHandlerActor(connection)))
   startWith(Initial, NoData)
 
   when(Initial) {
-    case Event(Tcp.Received(data), _) =>
-      log.info(s"Received ${Hex.encodeHexString(data.toArray)}")
+    case Event(bm: BitcoinMessage, _) =>
+      log.info(s"Received ${bm}")
       stay
 
     case Event(_: ConnectionClosed, _) =>
@@ -26,6 +27,7 @@ class Peer(connection: ActorRef) extends FSM[Peer.State, Peer.Data] with ActorLo
 
   initialize()
 }
+
 object Peer {
   trait State
   object Initial extends State
@@ -46,7 +48,6 @@ class PeerManager extends Actor with ActorLogging {
       log.info(s"Connected to ${remote}")
       val connection = sender
       val peer = context.actorOf(Props(new Peer(connection)))
-      connection ! Tcp.Register(peer)
   }
 }
 
@@ -60,4 +61,21 @@ object PeerManager extends App {
 
   val peerManager = system.actorOf(Props(new PeerManager), "peermanager")
   peerManager ! PeerManager.ConnectToPeer(new InetSocketAddress("localhost", 9333))
+}
+
+class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandler with ActorLogging {
+  connection ! Tcp.Register(self)
+  def receive = {
+    case Tcp.Received(data) => frame(data).flatMap(parse).foreach(context.parent ! _)
+    case bm: BitcoinMessage => connection ! Tcp.Write(bm.toMessage())
+    case other => context.parent ! other
+  }
+
+  private def parse(mh: MessageHeader): Option[BitcoinMessage] = {
+    mh.command match {
+      case "version" => Some(Version.parse(mh.payload))
+      case "verack" => Some(Verack)
+      case _ => None
+    }
+  }
 }

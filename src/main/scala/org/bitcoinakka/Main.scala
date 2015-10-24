@@ -10,7 +10,7 @@ case class MessageHeader(command: String, length: Int, checksum: Array[Byte], pa
   val totalLength = 24 + length
 }
 
-class MessageHandler {
+trait MessageHandler {
   implicit val bo = ByteOrder.LITTLE_ENDIAN
   def parseMessageHeader(bs: ByteString): Option[(MessageHeader, ByteString)] = {
     if (bs.length < 24)  // got less than the length of the message header, stop
