@@ -461,6 +461,7 @@ class AppSettingsImpl(config: Config) extends Extension {
   val bitcoinDb = config.getString("bitcoinDb")
   val batchSize = config.getInt("batchSize")
   val blockBaseDir = config.getString("blockBaseDir")
+  val baseDir = config.getString("baseDir")
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings
