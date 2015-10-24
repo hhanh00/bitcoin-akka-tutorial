@@ -6,6 +6,8 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeoutException
 
+import akka.event.LoggingReceive
+import akka.util.Timeout
 import com.typesafe.config.Config
 
 import scala.concurrent.{Promise, Future}
@@ -15,6 +17,8 @@ import akka.io.{IO, Tcp}
 import akka.io.Tcp.{Connect, CommandFailed, Connected, ConnectionClosed}
 import org.slf4j.LoggerFactory
 import BitcoinMessage._
+
+import scala.util.Success
 
 object PeerState extends Enumeration {
   val Connecting, Connected, Ready = Value
@@ -73,6 +77,14 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
   }
 
   whenUnhandled {
+    case Event(inv: Inv, _) =>
+      context.parent ! inv
+      stay
+
+    case Event(addr: Addr, _) =>
+      context.parent ! addr
+      stay
+
     case Event(bm: BitcoinMessage, _) =>
       log.info(s"Received ${bm}")
       stay
@@ -92,6 +104,7 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
     case Initial -> Ready =>
       log.info("Handshake done")
       cancelTimer("handshake")
+      messageHandler ! GetAddr
       context.parent ! Handshaked(nextStateData.asInstanceOf[HandshakeData].height.get)
   }
 
@@ -123,13 +136,18 @@ object Peer {
 
 case class PeerAddress(timestamp: Instant, address: InetSocketAddress, used: Boolean)
 
-class PeerManager(settings: AppSettingsImpl) extends Actor with ActorLogging {
+class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPersistDb with Stash with ActorLogging {
   import PeerManager._
   import Peer._
   import context.system
+  implicit val timeout = Timeout(1.hour)
+  implicit val ec = context.dispatcher
+  implicit val appSettings = settings
 
   val connection = DriverManager.getConnection(settings.bitcoinDb)
   connection.setAutoCommit(false)
+
+  blockchain = loadBlockchain()
 
   var peerId = 0
   var peersAvailable = Map.empty[String, PeerAddress]
@@ -137,7 +155,39 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with ActorLogging {
   var peersConnecting = Map.empty[String, Int]
   var peersConnected = Map.empty[ActorRef, Int]
 
-  def receive = {
+  val downloadManager = new DownloadManager(context)
+
+  def receive: Receive = ({
+    case sfp @ SyncFromPeer(peer, hash) =>
+      if (peersConnected.contains(peer) && getHeaderSync(hash).isEmpty) {
+        context.become(syncingReceive(peer) orElse commonReceive, discardOld = false)
+        synchronize(downloadManager.create(peer)).onComplete {
+          case Success(true) =>
+            self ! sfp
+            self ! SyncCompleted
+          case _ =>
+            self ! SyncCompleted
+        }
+      }
+  }: Receive) orElse commonReceive
+
+  def syncingReceive(peer: ActorRef): Receive = {
+    case _: SyncFromPeer => stash()
+    case SyncCompleted =>
+      unstashAll()
+      context.unbecome()
+  }
+
+  val commonReceive: Receive = LoggingReceive {
+    case inv: Inv =>
+      val peer = sender
+      for {
+        hash <- invBlocks(inv) if getHeaderSync(hash).isEmpty
+      } self ! SyncFromPeer(peer, hash)
+
+    case addr: Addr =>
+      addr.addrs.foreach(addr => self ! AddPeer(PeerAddress(addr.timestamp, addr.addr, false)))
+
     case ConnectToPeer(peerAddress) =>
       IO(Tcp) ! Tcp.Connect(peerAddress)
 
@@ -173,6 +223,8 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with ActorLogging {
       val peerId = peersConnected(peer)
       peerStates = peerStates.updated(peerId, PeerState.Ready)
       log.info(s"Handshake from ${peer}")
+      downloadManager.addPeer(peer)
+      self ! SyncFromPeer(peer, zeroHash)
 
     case Terminated(peer) =>
       val peerId = peersConnected(peer)
@@ -201,12 +253,17 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with ActorLogging {
       }
     }
   }
+
+  private def invBlocks(inv: Inv): List[Hash] = inv.invs.filter(_.tpe == 2).map(_.hash)
+  private def invTxs(inv: Inv): List[Hash] = inv.invs.filter(_.tpe == 1).map(_.hash)
 }
 
 object PeerManager extends App {
   case class ConnectToPeer(peerAddress: InetSocketAddress)
   case class AddPeer(address: PeerAddress)
   case object Start
+  case class SyncFromPeer(peer: ActorRef, hash: Hash)
+  case object SyncCompleted
 
   val log = LoggerFactory.getLogger(getClass)
 
@@ -243,6 +300,10 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
     mh.command match {
       case "version" => Some(Version.parse(mh.payload))
       case "verack" => Some(Verack)
+      case "headers" => Some(Headers.parse(mh.payload))
+      case "block" => Some(Block.parse(mh.payload))
+      case "inv" => Some(Inv.parse(mh.payload))
+      case "addr" => Some(Addr.parse(mh.payload))
       case _ => None
     }
   }

@@ -2,7 +2,7 @@ package org.bitcoinakka
 
 import scala.language.postfixOps
 
-import java.net.InetSocketAddress
+import java.net.{InetAddress, InetSocketAddress}
 import java.nio.{ByteBuffer, ByteOrder}
 import java.security.MessageDigest
 import java.time.Instant
@@ -426,5 +426,56 @@ object BlockHeader {
     val exp: Int = b(0).toInt & 0x000000FF
     val target = mantissa << (8*(exp-3))
     target
+  }
+}
+
+case class Inv(invs: List[InvEntry]) extends BitcoinMessage {
+  val command = "inv"
+  def toByteString() = {
+    val bb = new ByteStringBuilder
+    bb.putVarInt(invs.length)
+    for { inv <- invs } {
+      bb.putInt(inv.tpe)
+      bb.putBytes(inv.hash)
+    }
+    bb.result()
+  }
+}
+object Inv {
+  def parse(bs: ByteString) = {
+    val bi = bs.iterator
+    val count = bi.getVarInt
+    Inv((for { _ <- 0 until count } yield {
+      val tpe = bi.getInt
+      val hash = bi.getHash
+      InvEntry(tpe, hash)
+    }).toList)
+  }
+}
+
+case object GetAddr extends BitcoinMessage {
+  val command = "getaddr"
+  def toByteString() = ByteString.empty
+}
+
+case class Addr(addrs: List[AddrEntry]) extends BitcoinMessage {
+  val command = "addr"
+  def toByteString() = ???
+}
+case class AddrEntry(timestamp: Instant, addr: InetSocketAddress)
+object Addr {
+  def parse(bs: ByteString) = {
+    val bi = bs.iterator
+    val count = bi.getVarInt
+    Addr((for { _ <- 0 until count } yield {
+      val t = bi.getInt
+      val timestamp = Instant.ofEpochSecond(t)
+      bi.drop(8)
+      val addrBytes: Array[Byte] = new Array(16)
+      bi.getBytes(addrBytes)
+      val addr = InetAddress.getByAddress(addrBytes)
+      val port: Int = bi.getShort(ByteOrder.BIG_ENDIAN).toInt & 0xFFFF
+      AddrEntry(timestamp, new InetSocketAddress(addr, port))
+    }).toList)
   }
 }
