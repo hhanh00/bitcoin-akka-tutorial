@@ -2,10 +2,12 @@ package org.bitcoinakka
 
 import java.net.InetSocketAddress
 
+import scala.concurrent.duration._
 import akka.actor._
 import akka.io.{IO, Tcp}
 import akka.io.Tcp.{Connected, ConnectionClosed}
 import org.slf4j.LoggerFactory
+import BitcoinMessage._
 
 class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAddress) extends FSM[Peer.State, Peer.Data] with ActorLogging {
   import Peer._
@@ -16,6 +18,7 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
 
   startWith(Initial, HandshakeData(None, false))
 
+  setTimer("handshake", StateTimeout, timeout, false)
   messageHandler ! Version(BitcoinMessage.version, local, remote, 0L, "Bitcoin-akka", myHeight, 1.toByte)
 
   when(Initial) {
@@ -27,7 +30,36 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
       checkHandshakeFinished(d copy (ackReceived = true))
   }
 
-  when(Ready)(FSM.NullFunction)
+  when(Ready) {
+    case Event(gh: GetHeaders, _) =>
+      log.info(s"Peer received request for headers ${hashToString(gh.hashes.head)}")
+      messageHandler ! gh
+      setTimer("getheaders", StateTimeout, timeout, false)
+      stay using ReplyToData(sender)
+
+    case Event(gb: GetBlocks, _) =>
+      val gbMessage = GetBlockData(gb.hsd.map(_.blockHeader.hash))
+      messageHandler ! gbMessage
+      log.info(s"Peer received request to download ${gb.hsd.map(hsd => hashToString(hsd.blockHeader.hash))}")
+      setTimer("getblocks", StateTimeout, timeout, false)
+      stay using ReplyToData(sender)
+
+    case Event(headers: Headers, ReplyToData(s)) =>
+      log.info(s"Headers received (${headers.blockHeaders.length})")
+      cancelTimer("getheaders")
+      s ! headers
+      stay
+
+    case Event(block: Block, ReplyToData(s)) =>
+      log.info(s"Block received ${hashToString(block.header.hash)}")
+      s ! block
+      setTimer("getblocks", StateTimeout, timeout, false)
+      stay
+
+    case Event(GetBlocksFinished, _) =>
+      cancelTimer("getblocks")
+      stay
+  }
 
   whenUnhandled {
     case Event(bm: BitcoinMessage, _) =>
@@ -36,6 +68,11 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
 
     case Event(_: ConnectionClosed, _) =>
       log.info("Peer disconnected")
+      context stop self
+      stay
+
+    case Event(StateTimeout, _) =>
+      log.info("Peer timeout")
       context stop self
       stay
   }
@@ -58,7 +95,11 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
 }
 
 object Peer {
+  val timeout = 5.second
+
+  case class GetBlocks(hsd: List[HeaderSyncData])
   case class Handshaked(height: Int)
+  case object GetBlocksFinished
 
   trait State
   object Initial extends State
@@ -66,6 +107,7 @@ object Peer {
 
   trait Data
   case class HandshakeData(height: Option[Int], ackReceived: Boolean) extends Data
+  case class ReplyToData(replyTo: ActorRef) extends Data
 }
 
 class PeerManager extends Actor with ActorLogging {
