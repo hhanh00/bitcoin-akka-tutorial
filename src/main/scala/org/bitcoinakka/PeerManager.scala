@@ -8,15 +8,30 @@ import akka.io.Tcp.{Connected, ConnectionClosed}
 import org.apache.commons.codec.binary.Hex
 import org.slf4j.LoggerFactory
 
-class Peer(connection: ActorRef) extends Actor with ActorLogging {
-  def receive = {
-    case Tcp.Received(data) =>
-      log.info(s"Received ${Hex.encodeHexString(data.toArray)}")
+class Peer(connection: ActorRef) extends FSM[Peer.State, Peer.Data] with ActorLogging {
+  import Peer._
 
-    case _: ConnectionClosed =>
+  startWith(Initial, NoData)
+
+  when(Initial) {
+    case Event(Tcp.Received(data), _) =>
+      log.info(s"Received ${Hex.encodeHexString(data.toArray)}")
+      stay
+
+    case Event(_: ConnectionClosed, _) =>
       log.info("Peer disconnected")
       context stop self
+      stay
   }
+
+  initialize()
+}
+object Peer {
+  trait State
+  object Initial extends State
+
+  trait Data
+  object NoData extends Data
 }
 
 class PeerManager extends Actor with ActorLogging {
