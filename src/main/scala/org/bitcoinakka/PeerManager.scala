@@ -155,6 +155,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
   var peersConnecting = Map.empty[String, Int]
   var peersConnected = Map.empty[ActorRef, Int]
 
+  implicit val blockStore = new BlockStore(settings)
   val downloadManager = new DownloadManager(context)
 
   def receive: Receive = ({
@@ -309,7 +310,7 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
   }
 }
 
-class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsImpl) {
+class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsImpl, blockStore: BlockStore) {
   private val log = LoggerFactory.getLogger(getClass)
   import DownloadManager._
   import concurrent.ExecutionContext.Implicits.global
@@ -379,7 +380,7 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
       hashes <- s.workerToHashes.get(peer)
     } yield {
         val height = s.hashToHSD(wHash).height
-        // TODO: Save block -- blockStore.saveBlock(block, height)
+        blockStore.saveBlock(block, height)
         s copy (workerToHashes = s.workerToHashes.updated(peer, hashes - wHash))
       }) getOrElse s
   }
@@ -459,6 +460,7 @@ class AppSettingsImpl(config: Config) extends Extension {
   val targetConnectCount = config.getInt("targetConnectCount")
   val bitcoinDb = config.getString("bitcoinDb")
   val batchSize = config.getInt("batchSize")
+  val blockBaseDir = config.getString("blockBaseDir")
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings

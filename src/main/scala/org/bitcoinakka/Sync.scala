@@ -1,5 +1,8 @@
 package org.bitcoinakka
 
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
+import java.nio.file.{StandardOpenOption, Files, Paths, Path}
 import java.sql.Connection
 
 import akka.util.ByteString
@@ -9,6 +12,7 @@ import resource._
 
 import scala.concurrent.{ExecutionContext, Future}
 import scalaz.EphemeralStream
+import scalaz.syntax.std.boolean._
 
 case class HeaderSyncData(blockHeader: BlockHeader, height: Int, pow: BigInt)
 
@@ -144,4 +148,42 @@ trait SyncPersistDb extends SyncPersist {
       }
     Blockchain(chainRev)
   }
+}
+
+class BlockStore(settings: AppSettingsImpl) {
+  val log = LoggerFactory.getLogger(getClass)
+
+  def getBlockPath(hash: Hash, height: Int, isUndo: Boolean = false): Path = {
+    val baseDir = settings.blockBaseDir
+    val hashString = hashToString(hash)
+    val suffix = if (isUndo) ".undo" else ""
+    val prefix = height / 1000
+    Paths.get(baseDir, "blocks", prefix.toString, height.toString, hashString+suffix)
+  }
+
+  def haveBlock(hash: Hash, height: Int): Boolean = {
+    val path = getBlockPath(hash, height)
+    Files.exists(path)
+  }
+
+  def saveBlock(block: Block, height: Int) = {
+    val path = getBlockPath(block.header.hash, height)
+    path.toFile.getParentFile.mkdirs()
+    managed(FileChannel.open(path, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).foreach { _.write(block.payload.toByteBuffer) }
+  }
+
+  def loadBlockBytes(hash: Hash, height: Int): Option[Array[Byte]] = {
+    val path = getBlockPath(hash, height)
+    Files.exists(path).option(()).map { _ =>
+      managed(FileChannel.open(path, StandardOpenOption.READ)).acquireAndGet { channel =>
+        val bb = ByteBuffer.allocate(channel.size.toInt)
+        channel.read(bb)
+        channel.close()
+        bb.array()
+      }
+    }
+  }
+
+  def loadBlockOpt(hash: Hash, height: Int) = loadBlockBytes(hash, height).map(b => Block.parse(ByteString(b)))
+  def loadBlock(hash: Hash, height: Int) = loadBlockOpt(hash, height).get
 }
