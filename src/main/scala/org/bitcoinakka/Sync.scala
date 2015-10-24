@@ -5,8 +5,9 @@ import java.nio.channels.FileChannel
 import java.nio.file.{StandardOpenOption, Files, Paths, Path}
 import java.sql.Connection
 
-import akka.util.ByteString
-import org.bitcoinakka.BitcoinMessage._
+import akka.util.{ByteStringBuilder, ByteString}
+import BitcoinMessage._
+import UTXO.UTXOEntryList
 import org.slf4j.LoggerFactory
 import resource._
 
@@ -186,4 +187,42 @@ class BlockStore(settings: AppSettingsImpl) {
 
   def loadBlockOpt(hash: Hash, height: Int) = loadBlockBytes(hash, height).map(b => Block.parse(ByteString(b)))
   def loadBlock(hash: Hash, height: Int) = loadBlockOpt(hash, height).get
+
+  def saveUndoBlock(hash: Hash, height: Int, undoList: UTXOEntryList): Unit = {
+    val path = getBlockPath(hash, height, true)
+    path.toFile.getParentFile.mkdirs()
+    val channel = FileChannel.open(path, StandardOpenOption.WRITE, StandardOpenOption.CREATE)
+    val bb = new ByteStringBuilder
+    bb.putInt(undoList.size)
+    undoList.foreach { entry =>
+      log.debug(s"Undo Write> ${entry.key}")
+      bb.append(entry.key.toByteString())
+      bb.putByte(if (entry.value.isDefined) 1.toByte else 0.toByte)
+      entry.value.foreach { v => bb.append(v.toByteString()) }
+    }
+    channel.write(bb.result().toByteBuffer)
+    channel.close()
+  }
+
+  def loadUndoBlock(hash: Hash, height: Int): UTXOEntryList = {
+    val path = getBlockPath(hash, height, true)
+    val channel = FileChannel.open(path, StandardOpenOption.READ)
+    val bb = ByteBuffer.allocate(channel.size.toInt)
+    channel.read(bb)
+    channel.close()
+    bb.flip()
+    val bi = ByteString(bb).iterator
+    val size = bi.getInt
+    List.range(0, size).map { _ =>
+      val key = OutPoint.parse(bi)
+      log.debug(s"Undo Read> ${key}")
+      val hasValue = bi.getByte
+      val value =
+        if (hasValue != 0.toByte)
+          Some(UTxOut.parse(bi))
+        else
+          None
+      UTXOEntry(key, value)
+    }
+  }
 }
