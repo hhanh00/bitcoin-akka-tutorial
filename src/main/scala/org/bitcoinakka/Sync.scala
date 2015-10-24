@@ -4,13 +4,17 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.{StandardOpenOption, Files, Paths, Path}
 import java.sql.Connection
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 import akka.util.{ByteStringBuilder, ByteString}
 import BitcoinMessage._
+import Consensus._
 import UTXO.UTXOEntryList
 import org.slf4j.LoggerFactory
 import resource._
 
+import scala.collection.immutable.Queue
 import scala.concurrent.{ExecutionContext, Future}
 import scalaz.Free._
 import scalaz.{StateT, EphemeralStream, Trampoline, State, OptionT}
@@ -45,7 +49,9 @@ trait Sync { self: SyncPersist =>
       headersSyncData = attachHeaders(headers)
       _ <- Future.successful(()) if !headersSyncData.isEmpty
       _ <- isBetter(headersSyncData)
-      _ <- provider.downloadBlocks(headersSyncData.tail)
+      (goodHeaders, badHeaders) = validateHeaders(headersSyncData)
+      _ <- isBetter(goodHeaders)
+      _ <- provider.downloadBlocks(goodHeaders.tail)
       (goodBlocks, badBlocks, undo) = validateBlocks(headersSyncData)
     } yield {
         updateMain(goodBlocks)
@@ -77,6 +83,64 @@ trait Sync { self: SyncPersist =>
           }
         } getOrElse Nil
     }
+  }
+
+  case class HeaderCheckData(height: Int, prevHash: Hash, timestamps: Queue[Long], prevBits: Int, now2h: Long, prevTimestamp: Long, elapsedSinceAdjustment: Long) {
+    override def toString() = s"HeaderCheckData(${height},${hashToString(prevHash)},${timestamps},${prevBits},${now2h},${elapsedSinceAdjustment}})"
+  }
+  object HeaderCheckData {
+    def now2h() = Instant.now.plus(2, ChronoUnit.HOURS).getEpochSecond
+    def apply(initial: HeaderSyncData, blockchain: Blockchain): HeaderCheckData = {
+      val previousTimestamps = Queue.empty[Long] ++
+        blockchain.chainRev.dropWhile(sd => !sd.blockHeader.hash.sameElements(initial.blockHeader.hash)).take(11).map(_.blockHeader.timestamp.getEpochSecond).padTo(11, 0L).reverse
+      val height = initial.height
+      val timestamp = initial.blockHeader.timestamp.getEpochSecond
+      val timestampAtAdjustment = blockchain.chainRev.filter(_.height % Consensus.difficultyAdjustmentInterval == 0).head.blockHeader.timestamp.getEpochSecond
+      val elapsedSinceAdjustment = timestamp-timestampAtAdjustment
+      new HeaderCheckData(height, initial.blockHeader.hash, previousTimestamps, initial.blockHeader.bits, now2h(), timestamp, elapsedSinceAdjustment)
+    }
+  }
+
+  def checkHeader(header: HeaderSyncData) = StateT[Trampoline, HeaderCheckData, Boolean] { checkData =>
+    val height = checkData.height+1
+    val blockHeader = header.blockHeader
+    val prevHashMatch = checkData.prevHash.sameElements(header.blockHeader.prevHash)
+    val median = checkData.timestamps.sorted.apply(5)
+    val timestamp = blockHeader.timestamp.getEpochSecond
+    val timestampMatch = median < timestamp && timestamp < checkData.now2h
+
+    var updatedCheckData = checkData copy (height = height, prevHash = blockHeader.hash,
+      timestamps = checkData.timestamps.tail :+ timestamp, prevBits = blockHeader.bits,
+      elapsedSinceAdjustment = checkData.elapsedSinceAdjustment+(timestamp-checkData.prevTimestamp),
+      prevTimestamp = timestamp)
+
+    val hashMatch = BigInt(1, blockHeader.hash.reverse) < blockHeader.target
+    val versionMatch = true // blockHeader.version <= 4 // TODO T83
+    val bitsMatch = if (height >= Blockchain.firstDifficultyAdjustment && height % difficultyAdjustmentInterval == 0) {
+      updatedCheckData = updatedCheckData copy (elapsedSinceAdjustment = 0L)
+      blockHeader.bits == adjustedDifficulty(blockHeader, BlockHeader.getTarget(checkData.prevBits), checkData.elapsedSinceAdjustment)
+    }
+    else (blockHeader.bits == checkData.prevBits)
+
+    val result = prevHashMatch && timestampMatch && hashMatch && versionMatch && bitsMatch
+    if (!result) {
+      log.info(s"${checkData}")
+      log.info(s"Block timestamp ${timestampToString(timestamp)}(${timestamp}}) must be between ${timestampToString(median)}(${median}}) and ${timestampToString(checkData.now2h)}")
+      log.info(s"Result ${result} (${prevHashMatch} ${timestampMatch} ${hashMatch} ${versionMatch} ${bitsMatch})")
+    }
+
+    Trampoline.done(updatedCheckData, result)
+  }
+
+  type HeaderCheckStateTrampoline[T] = StateT[Trampoline, HeaderCheckData, T]
+  private def validateHeaders(headers: List[HeaderSyncData])(implicit blockchain: Blockchain): (List[HeaderSyncData], List[HeaderSyncData]) = {
+    log.info(s"+ validateHeaders ${headers}")
+    assert(!headers.isEmpty)
+    val anchor = headers.head
+    val r = headers.tail.spanM[HeaderCheckStateTrampoline](checkHeader).eval(HeaderCheckData(anchor, blockchain)).run
+    val r2 = (anchor :: r._1, r._2)
+    log.debug(s"-validateHeaders ${r2}")
+    r2
   }
 
   case class BlockCheckData(txLog: List[UTXOOperation])

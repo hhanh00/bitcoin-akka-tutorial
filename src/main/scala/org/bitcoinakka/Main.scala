@@ -50,18 +50,21 @@ trait BitcoinNetParams {
   val magic: Int
   val genesisHash: WHash
   val genesisBlockHeader: BlockHeader
+  val firstDifficultyAdjustment: Int
 }
 object MainNet extends BitcoinNetParams {
   val magic = 0xD9B4BEF9
   val genesisHash = hashFromString("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f").wrapped
   val genesisBytes = Hex.decodeHex("0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c".toCharArray)
   val genesisBlockHeader = BlockHeader.parse(ByteString(genesisBytes).iterator, genesisHash.array, false)
+  val firstDifficultyAdjustment = 32256
 }
 object RegTestNet extends BitcoinNetParams {
   val magic = 0xDAB5BFFA
   val genesisHash = new WHash(hashFromString("0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"))
   val genesisBlockHeader = BlockHeader(genesisHash.array, 1, zeroHash.array, hashFromString("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"),
     Instant.ofEpochSecond(1296688602), 545259519, 2, 0)
+  val firstDifficultyAdjustment = 0
 }
 case class Blockchain(chainRev: List[HeaderSyncData]) {
   def currentTip = chainRev.head
@@ -79,4 +82,5 @@ object Blockchain {
   val magic = netParams.magic
   val genesisHash = netParams.genesisHash
   val genesisBlockHeader = netParams.genesisBlockHeader
+  val firstDifficultyAdjustment = netParams.firstDifficultyAdjustment
 }
