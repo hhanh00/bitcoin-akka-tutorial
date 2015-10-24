@@ -1,7 +1,9 @@
 package org.bitcoinakka
 
+import java.net.InetSocketAddress
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.time.Instant
 
 import akka.util.{ByteIterator, ByteStringBuilder, ByteString}
 import org.apache.commons.lang3.StringUtils
@@ -95,5 +97,66 @@ object BitcoinMessage extends ByteOrderImplicit {
       bi.getBytes(script)
       script
     }
+  }
+}
+
+case class Version(version: Int, services: Long, timestamp: Long, recv: Array[Byte], from: Array[Byte], nonce: Long, userAgent: String, height: Int, relay: Byte) extends BitcoinMessage {
+  import BitcoinMessage.ByteStringBuilderExt
+  val command = "version"
+  def toByteString(): ByteString = {
+    val bb = new ByteStringBuilder
+    bb.putInt(version)
+    bb.putLong(services)
+    bb.putLong(timestamp)
+    bb.putBytes(recv)
+    bb.putBytes(from)
+    bb.putLong(nonce)
+    bb.putVarString(userAgent)
+    bb.putInt(height)
+    bb.putByte(relay)
+    bb.result()
+  }
+}
+object Version extends ByteOrderImplicit {
+  import BitcoinMessage.ByteStringIteratorExt
+  def apply(version: Int, recv: InetSocketAddress, from: InetSocketAddress, nonce: Long, userAgent: String, height: Int, relay: Byte) = {
+    val now = Instant.now
+    new Version(version, 1L, now.getEpochSecond, NetworkAddress(recv).toByteArray(), NetworkAddress(from).toByteArray(), nonce, userAgent, height, relay)
+  }
+  def parse(bs: ByteString) = {
+    val iter = bs.iterator
+    val version = iter.getInt
+    val services = iter.getLong
+    val timestamp = iter.getLong
+    val recv = new Array[Byte](26)
+    iter.getBytes(recv)
+    val from = new Array[Byte](26)
+    iter.getBytes(from)
+    val nonce = iter.getLong
+    val userAgent = iter.getVarString
+    val height = iter.getInt
+    val relay =
+      if (iter.isEmpty)
+        0.toByte
+      else
+        iter.getByte
+    Version(version, services, timestamp, recv, from, nonce, userAgent, height, relay)
+  }
+}
+
+case object Verack extends BitcoinMessage {
+  val command = "verack"
+  def toByteString() = ByteString.empty
+}
+
+case class NetworkAddress(address: InetSocketAddress) extends ByteOrderImplicit {
+  def toByteArray(): Array[Byte] = {
+    val bb = new ByteStringBuilder
+    bb.putLong(0)
+    bb.putLong(0)
+    bb.putInt(0xFFFF0000)
+    bb.putBytes(address.getAddress.getAddress)
+    bb.putShort(address.getPort)
+    bb.result().toArray[Byte]
   }
 }
