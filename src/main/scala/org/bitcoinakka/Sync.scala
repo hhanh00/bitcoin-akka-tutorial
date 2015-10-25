@@ -2,25 +2,25 @@ package org.bitcoinakka
 
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.nio.file.{StandardOpenOption, Files, Paths, Path}
+import java.nio.file.{Files, Path, Paths, StandardOpenOption}
 import java.sql.Connection
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
-import akka.util.{ByteStringBuilder, ByteString}
-import BitcoinMessage._
-import Consensus._
-import UTXO.UTXOEntryList
+import akka.util.{ByteString, ByteStringBuilder}
+import org.bitcoinakka.BitcoinMessage._
+import org.bitcoinakka.Consensus._
+import org.bitcoinakka.UTXO.UTXOEntryList
 import org.slf4j.LoggerFactory
 import resource._
 
 import scala.collection.immutable.Queue
 import scala.concurrent.{ExecutionContext, Future}
 import scalaz.Free._
-import scalaz.{StateT, EphemeralStream, Trampoline, State, OptionT}
 import scalaz.syntax.monad._
 import scalaz.syntax.std.boolean._
 import scalaz.syntax.std.list._
+import scalaz.{EphemeralStream, OptionT, State, StateT, Trampoline}
 
 case class HeaderSyncData(blockHeader: BlockHeader, height: Int, pow: BigInt)
 

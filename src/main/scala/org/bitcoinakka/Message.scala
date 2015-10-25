@@ -1,16 +1,16 @@
 package org.bitcoinakka
 
-import scala.language.postfixOps
-
 import java.net.{InetAddress, InetSocketAddress}
 import java.nio.{ByteBuffer, ByteOrder}
 import java.security.MessageDigest
 import java.time.Instant
 
-import akka.util.{ByteIterator, ByteStringBuilder, ByteString}
+import akka.util.{ByteIterator, ByteString, ByteStringBuilder}
 import org.apache.commons.codec.binary.Hex
 import org.apache.commons.lang3.StringUtils
-import BitcoinMessage._
+import org.bitcoinakka.BitcoinMessage._
+
+import scala.language.postfixOps
 
 trait ByteOrderImplicit {
   implicit val byteOrder = ByteOrder.LITTLE_ENDIAN

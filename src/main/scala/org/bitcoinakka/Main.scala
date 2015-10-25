@@ -4,8 +4,8 @@ import java.time.Instant
 
 import akka.actor.ActorRef
 import akka.util.ByteString
-import BitcoinMessage._
 import org.apache.commons.codec.binary.Hex
+import org.bitcoinakka.BitcoinMessage._
 import org.slf4j.LoggerFactory
 
 import scalaz.EphemeralStream

@@ -2,15 +2,15 @@ package org.bitcoinakka
 
 import java.io.File
 
-import language.postfixOps
-import akka.util.{ByteIterator, ByteStringBuilder, ByteString}
-import BitcoinMessage._
+import akka.util.{ByteIterator, ByteString, ByteStringBuilder}
+import org.bitcoinakka.BitcoinMessage._
 import org.fusesource.leveldbjni.JniDBFactory
 import org.iq80.leveldb.{DBException, Options}
 import org.slf4j.LoggerFactory
 import resource.Resource
 
 import scala.collection.mutable
+import scala.language.postfixOps
 
 case class UTxOut(txOut: TxOut, height: Option[Int]) extends ByteOrderImplicit {
   def toByteString(): ByteString = {

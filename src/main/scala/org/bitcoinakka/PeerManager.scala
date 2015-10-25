@@ -6,19 +6,19 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeoutException
 
+import akka.actor._
 import akka.event.LoggingReceive
-import akka.util.Timeout
+import akka.io.Tcp._
+import akka.io.{IO, Tcp}
+import akka.util.{ByteString, Timeout}
 import com.typesafe.config.Config
+import org.bitcoinakka.BitcoinMessage._
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConversions._
-import scala.concurrent.{Promise, Future}
+import scala.collection.immutable.Queue
 import scala.concurrent.duration._
-import akka.actor._
-import akka.io.{IO, Tcp}
-import akka.io.Tcp.{Connect, CommandFailed, Connected, ConnectionClosed}
-import org.slf4j.LoggerFactory
-import BitcoinMessage._
-
+import scala.concurrent.{Future, Promise}
 import scala.util.{Random, Success}
 
 object PeerState extends Enumeration {
@@ -44,6 +44,7 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
 
   when(Initial) {
     case Event(v: Version, d: HandshakeData) =>
+      log.info(s"Connection from ${v.userAgent}")
       messageHandler ! Verack
       checkHandshakeFinished(d copy (height = Some(v.height)))
 
@@ -141,6 +142,9 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
   }
 
   override def postStop() = {
+    cancelTimer("handshake")
+    cancelTimer("getheaders")
+    cancelTimer("getblocks")
     invBroadcastCancel.cancel()
     pingCancel.cancel()
   }
@@ -170,8 +174,8 @@ object Peer {
 case class PeerAddress(timestamp: Instant, address: InetSocketAddress, used: Boolean)
 
 class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPersistDb with Stash with ActorLogging {
-  import PeerManager._
   import Peer._
+  import PeerManager._
   import context.system
   implicit val timeout = Timeout(1.hour)
   implicit val ec = context.dispatcher
@@ -193,6 +197,8 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
   implicit val blockStore = new BlockStore(settings)
   val downloadManager = new DownloadManager(context)
   val txPool = new TxPool(db, blockchain.chainRev.head)
+
+  IO(Tcp) ! Bind(self, new InetSocketAddress("0.0.0.0", settings.incomingPort))
 
   def receive: Receive = ({
     case sfp @ SyncFromPeer(peer, hash) =>
@@ -275,7 +281,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       log.info(s"Connected to ${remote}")
       val connection = sender
       val peerHostString = remote.getHostString
-      val peerId = peersConnecting(peerHostString)
+      val peerId = peersConnecting.getOrElse(peerHostString, allocateNewId())
       val peer = context.actorOf(Props(new Peer(connection, local, remote)))
       context watch peer
       peersConnecting -= peerHostString
@@ -311,12 +317,17 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       val ps = peersAvailable.values.filter(p => !p.used).toList.take(targetConnectCount-c)
       for { p <- ps } {
         peersAvailable = peersAvailable.updated(p.address.getHostString, p copy (used = true))
-        peersConnecting += p.address.getHostString -> peerId
+        peersConnecting += p.address.getHostString -> allocateNewId()
         peerStates += peerId -> PeerState.Connecting
         self ! ConnectToPeer(p.address)
-        peerId += 1
       }
     }
+  }
+
+  private def allocateNewId() = {
+    val pid = peerId
+    peerId += 1
+    pid
   }
 
   private def invBlocks(inv: Inv): List[Hash] = inv.invs.filter(_.tpe == 2).map(_.hash)
@@ -354,11 +365,13 @@ object PeerManager extends App {
   }
 }
 
+case object Ack extends Event
 class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandler with ActorLogging {
   connection ! Tcp.Register(self)
   def receive = {
     case Tcp.Received(data) => frame(data).flatMap(parse).foreach(context.parent ! _)
-    case bm: BitcoinMessage => connection ! Tcp.Write(bm.toMessage())
+    case bm: BitcoinMessage => sendMessage(bm)
+    case Ack => acknowledge()
     case other => context.parent ! other
   }
 
@@ -380,11 +393,34 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
       case _ => Nil
     }
   }
+
+  var acknowledged = true
+  var writeBuffer = Queue.empty[ByteString]
+  private def sendMessage(bm: BitcoinMessage) = {
+    bm match {
+      case block: Block => log.info(s"block ${hashToString(block.header.hash)}")
+      case _ =>
+    }
+    val bytes = bm.toMessage()
+    writeBuffer :+= bytes
+    if (acknowledged) {
+      connection ! Tcp.Write(bytes, Ack)
+      acknowledged = false
+    }
+  }
+  private def acknowledge() = {
+    writeBuffer = writeBuffer.drop(1)
+    if (writeBuffer.isEmpty)
+      acknowledged = true
+    else
+      connection ! Tcp.Write(writeBuffer(0), Ack)
+  }
 }
 
 class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsImpl, blockStore: BlockStore) {
   private val log = LoggerFactory.getLogger(getClass)
   import DownloadManager._
+
   import concurrent.ExecutionContext.Implicits.global
 
   def addPeer(peer: ActorRef) = {
@@ -543,6 +579,8 @@ class AppSettingsImpl(config: Config) extends Extension {
   val start = blockFilesConfig.getInt("start")
   val saveBlocksConfig = config.getConfig("saveBlocks")
   val blockFiles = BlockFilesConfig(path, start, checkpoints.map(_.toInt).toList)
+
+  val incomingPort = config.getInt("incomingPort")
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings

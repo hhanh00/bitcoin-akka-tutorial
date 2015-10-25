@@ -1,12 +1,12 @@
 package org.bitcoinakka
 
 import java.nio.{ByteBuffer, ByteOrder}
-import java.time.{ZoneId, Instant}
+import java.time.{Instant, ZoneId}
 
 import akka.util.ByteString
+import org.bitcoinakka.BitcoinMessage._
 import org.slf4j.LoggerFactory
 
-import BitcoinMessage._
 import scalaz.syntax.std.boolean._
 
 object Consensus {
