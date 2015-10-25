@@ -1,6 +1,7 @@
 package org.bitcoinakka
 
 import java.nio.ByteOrder
+import java.security.MessageDigest
 
 import akka.util.{ByteStringBuilder, ByteString}
 import org.apache.commons.lang3.StringUtils
@@ -24,10 +25,20 @@ trait BitcoinMessage extends ByteOrderImplicit {
     bb.append(payload)
     bb.result()
   }
-
-  def calcChecksum(payload: ByteString) = ???
 }
 
 object BitcoinMessage {
   val magic = 0xD9B4BEF9
+
+  def calcChecksum(data: ByteString) = {
+    val hash = dsha(data.toArray[Byte])
+    java.util.Arrays.copyOfRange(hash, 0, 4)
+  }
+
+  val sha256: (Array[Byte]) => Array[Byte] = { data =>
+    val md = MessageDigest.getInstance("SHA-256")
+    md.update(data)
+    md.digest()
+  }
+  val dsha = sha256 compose sha256
 }
