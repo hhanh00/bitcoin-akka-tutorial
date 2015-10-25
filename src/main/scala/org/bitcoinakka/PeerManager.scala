@@ -5,16 +5,31 @@ import java.net.InetSocketAddress
 import akka.actor._
 import akka.io.{IO, Tcp}
 import akka.io.Tcp.{Connected, ConnectionClosed}
-import org.apache.commons.codec.binary.Hex
 import org.slf4j.LoggerFactory
 
-class Peer(connection: ActorRef) extends FSM[Peer.State, Peer.Data] with ActorLogging {
+class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAddress) extends FSM[Peer.State, Peer.Data] with ActorLogging {
   import Peer._
 
   val messageHandler = context.actorOf(Props(new MessageHandlerActor(connection)))
-  startWith(Initial, NoData)
+
+  val myHeight = 0
+
+  startWith(Initial, HandshakeData(None, false))
+
+  messageHandler ! Version(BitcoinMessage.version, local, remote, 0L, "Bitcoin-akka", myHeight, 1.toByte)
 
   when(Initial) {
+    case Event(v: Version, d: HandshakeData) =>
+      messageHandler ! Verack
+      checkHandshakeFinished(d copy (height = Some(v.height)))
+
+    case Event(Verack, d: HandshakeData) =>
+      checkHandshakeFinished(d copy (ackReceived = true))
+  }
+
+  when(Ready)(FSM.NullFunction)
+
+  whenUnhandled {
     case Event(bm: BitcoinMessage, _) =>
       log.info(s"Received ${bm}")
       stay
@@ -25,15 +40,32 @@ class Peer(connection: ActorRef) extends FSM[Peer.State, Peer.Data] with ActorLo
       stay
   }
 
+  onTransition {
+    case Initial -> Ready =>
+      log.info("Handshake done")
+      cancelTimer("handshake")
+      context.parent ! Handshaked(nextStateData.asInstanceOf[HandshakeData].height.get)
+  }
+
   initialize()
+
+  private def checkHandshakeFinished(d: HandshakeData) = d match {
+    case HandshakeData(Some(height), true) =>
+      goto(Ready)
+    case _ =>
+      stay using d
+  }
 }
 
 object Peer {
+  case class Handshaked(height: Int)
+
   trait State
   object Initial extends State
+  object Ready extends State
 
   trait Data
-  object NoData extends Data
+  case class HandshakeData(height: Option[Int], ackReceived: Boolean) extends Data
 }
 
 class PeerManager extends Actor with ActorLogging {
@@ -47,7 +79,7 @@ class PeerManager extends Actor with ActorLogging {
     case Connected(remote, local) =>
       log.info(s"Connected to ${remote}")
       val connection = sender
-      val peer = context.actorOf(Props(new Peer(connection)))
+      val peer = context.actorOf(Props(new Peer(connection, local, remote)))
   }
 }
 

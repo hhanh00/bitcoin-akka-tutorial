@@ -31,6 +31,7 @@ trait BitcoinMessage extends ByteOrderImplicit {
 
 object BitcoinMessage extends ByteOrderImplicit {
   val magic = 0xD9B4BEF9
+  val version = 70001
   type Hash = Array[Byte]
   type Script = Array[Byte]
 
