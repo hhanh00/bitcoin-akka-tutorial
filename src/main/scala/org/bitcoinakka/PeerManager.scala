@@ -1,6 +1,7 @@
 package org.bitcoinakka
 
 import java.net.{InetAddress, InetSocketAddress}
+import java.sql.DriverManager
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
@@ -125,6 +126,9 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with ActorLogging {
   import Peer._
   import context.system
 
+  val connection = DriverManager.getConnection(settings.bitcoinDb)
+  connection.setAutoCommit(false)
+
   var peerId = 0
   var peersAvailable = Map.empty[String, PeerAddress]
   var peerStates = Map.empty[Int, PeerState.Value]
@@ -203,6 +207,9 @@ object PeerManager extends App {
   case object Start
 
   val log = LoggerFactory.getLogger(getClass)
+
+  Class.forName("com.mysql.jdbc.Driver")
+
   implicit val system = ActorSystem()
   implicit val settings = AppSettings(system)
 
@@ -241,6 +248,7 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
 
 class AppSettingsImpl(config: Config) extends Extension {
   val targetConnectCount = config.getInt("targetConnectCount")
+  val bitcoinDb = config.getString("bitcoinDb")
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings

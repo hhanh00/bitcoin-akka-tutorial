@@ -37,7 +37,9 @@ object BitcoinMessage extends ByteOrderImplicit {
   val magic = 0xD9B4BEF9
   val version = 70001
   type Hash = Array[Byte]
+  type WHash = collection.mutable.WrappedArray.ofByte
   type Script = Array[Byte]
+  val zeroHash: Hash = new Array(32)
 
   def hashFromString(hs: String) = Hex.decodeHex(hs.toCharArray).reverse
   def hashToString(hash: Hash) = Hex.encodeHexString(hash.reverse)
@@ -105,6 +107,10 @@ object BitcoinMessage extends ByteOrderImplicit {
       bi.getBytes(script)
       script
     }
+  }
+
+  implicit class toWHash(hash: Hash) {
+    def wrapped = new WHash(hash)
   }
 }
 
