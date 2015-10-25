@@ -147,6 +147,8 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
   val connection = DriverManager.getConnection(settings.bitcoinDb)
   connection.setAutoCommit(false)
 
+  val db = new LevelDbUTXO(settings)
+
   blockchain = loadBlockchain()
 
   var peerId = 0
@@ -344,8 +346,9 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
   }
 
   def internalDownloadBlocks(hashes: List[HeaderSyncData]): Future[Unit] = {
+    val notDownloadedHashes = hashes.filter(hsd => !blockStore.haveBlock(hsd.blockHeader.hash, hsd.height))
     val p = Promise[Unit]()
-    d ! GetBlocks(hashes, p)
+    d ! GetBlocks(notDownloadedHashes, p)
     p.future
   }
 

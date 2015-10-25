@@ -12,8 +12,11 @@ import org.slf4j.LoggerFactory
 import resource._
 
 import scala.concurrent.{ExecutionContext, Future}
-import scalaz.EphemeralStream
+import scalaz.Free._
+import scalaz.{StateT, EphemeralStream, Trampoline, State, OptionT}
+import scalaz.syntax.monad._
 import scalaz.syntax.std.boolean._
+import scalaz.syntax.std.list._
 
 case class HeaderSyncData(blockHeader: BlockHeader, height: Int, pow: BigInt)
 
@@ -28,25 +31,39 @@ trait SyncPersist {
   def setMainTip(newTip: Hash)
 }
 
+case class ForkHasLessPOW(message: String) extends Exception(message)
 trait Sync { self: SyncPersist =>
   private val log = LoggerFactory.getLogger(getClass)
   implicit var blockchain: Blockchain = null
   implicit val ec: ExecutionContext
+  implicit val db: UTXODb
+  implicit val blockStore: BlockStore
 
   def synchronize(provider: SyncDataProvider): Future[Boolean] = {
     val f = for {
       headers <- provider.getHeaders(blockchain.chainRev.take(10).map(_.blockHeader.hash))
       headersSyncData = attachHeaders(headers)
       _ <- Future.successful(()) if !headersSyncData.isEmpty
+      _ <- isBetter(headersSyncData)
       _ <- provider.downloadBlocks(headersSyncData.tail)
+      (goodBlocks, badBlocks, undo) = validateBlocks(headersSyncData)
     } yield {
-        updateMain(headersSyncData)
+        updateMain(goodBlocks)
         true
       }
 
     f recover {
       case _: java.util.NoSuchElementException => false
     }
+  }
+
+  private def isBetter(chain: List[HeaderSyncData]): Future[Unit] = {
+    val currentPOW = blockchain.chainRev.head.pow
+    val newPOW = chain.last.pow
+    if (newPOW > currentPOW)
+      Future.successful(())
+    else
+      Future.failed(new ForkHasLessPOW(s"New POW = ${newPOW}, Current POW = ${currentPOW}"))
   }
 
   private def attachHeaders(headers: List[BlockHeader]): List[HeaderSyncData] = {
@@ -62,6 +79,37 @@ trait Sync { self: SyncPersist =>
     }
   }
 
+  case class BlockCheckData(txLog: List[UTXOOperation])
+  object BlockCheckData {
+    def apply(initial: HeaderSyncData, currentChainRev: List[HeaderSyncData]) = {
+      val undoList = currentChainRev
+        .takeWhile(sd => !sd.blockHeader.hash.sameElements(initial.blockHeader.hash))
+        .map(sd => UTXOBlockOperation(sd.blockHeader.hash, sd.height, isUndo = true))
+      undoList.foreach(_.run(db))
+      new BlockCheckData(undoList.reverse)
+    }
+  }
+  type BlockCheckStateTrampoline[T] = StateT[Trampoline, BlockCheckData, T]
+  type BlockCheckState[T] = State[BlockCheckData, T]
+  type BlockCheckStateOption[T] = OptionT[BlockCheckState, T]
+
+  private def validateBlocks(headers: List[HeaderSyncData]): (List[HeaderSyncData], List[HeaderSyncData], List[UTXOOperation]) = {
+    log.info(s"+ validateBlocks ${headers}")
+    val anchor = headers.head
+    val (blockCheckData, r) = headers.tail.spanM[BlockCheckStateTrampoline](checkBlockData).run(BlockCheckData(anchor, blockchain.chainRev)).run
+    log.debug(s"-validateBlocks ${r}")
+    (anchor :: r._1, r._2, blockCheckData.txLog)
+  }
+
+  private def checkBlockData(header: HeaderSyncData): StateT[Trampoline, BlockCheckData, Boolean] = {
+    StateT[Trampoline, BlockCheckData, Boolean] { checkData =>
+      log.info(s"++ checkBlockData ${header}")
+      val block = blockStore.loadBlock(header.blockHeader.hash, header.height)
+      val op = updateUTXODb(block, header.height)
+      Trampoline.done((checkData copy (txLog = op :: checkData.txLog), true))
+      }
+    }
+
   private def updateMain(chain: List[HeaderSyncData]) = {
     chain match {
       case anchor :: newChain =>
@@ -72,6 +120,13 @@ trait Sync { self: SyncPersist =>
         log.info(s"Height = ${blockchain.currentTip.height}, POW = ${blockchain.currentTip.pow}")
       case _ => assert(false)
     }
+  }
+
+  private def updateUTXODb(block: Block, height: Int): UTXOBlockOperation = {
+    UTXOBlockOperation.buildAndSaveUndoBlock(db, block, height)
+    val op = UTXOBlockOperation(block.header.hash, height, false)
+    op.run(db)
+    op
   }
 }
 
