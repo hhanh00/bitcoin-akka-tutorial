@@ -19,7 +19,7 @@ import akka.io.Tcp.{Connect, CommandFailed, Connected, ConnectionClosed}
 import org.slf4j.LoggerFactory
 import BitcoinMessage._
 
-import scala.util.Success
+import scala.util.{Random, Success}
 
 object PeerState extends Enumeration {
   val Connecting, Connected, Ready = Value
@@ -28,9 +28,14 @@ object PeerState extends Enumeration {
 class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAddress) extends FSM[Peer.State, Peer.Data] with ActorLogging {
   import Peer._
 
+  implicit val ec = context.dispatcher
   val messageHandler = context.actorOf(Props(new MessageHandlerActor(connection)))
 
   val myHeight = 0
+
+  var invs = List.empty[InvEntry]
+  val invBroadcastCancel = context.system.scheduler.schedule(invBroadcast, invBroadcast, self, InvBroadcast)
+  val pingCancel = context.system.scheduler.schedule(heartbeat, heartbeat, self, new Ping(Random.nextLong()))
 
   startWith(Initial, HandshakeData(None, false))
 
@@ -78,12 +83,16 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
   }
 
   whenUnhandled {
-    case Event(inv: Inv, _) =>
-      context.parent ! inv
+    case Event(ping: Ping, _) =>
+      messageHandler ! new Pong(ping.nonce)
       stay
 
-    case Event(addr: Addr, _) =>
-      context.parent ! addr
+    case Event(IncomingMessage(m), _) =>
+      context.parent ! m
+      stay
+
+    case Event(OutgoingMessage(m), _) =>
+      messageHandler ! m
       stay
 
     case Event(bm: BitcoinMessage, _) =>
@@ -98,6 +107,19 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
     case Event(StateTimeout, _) =>
       log.info("Peer timeout")
       context stop self
+      stay
+
+    case Event(GetTx(hash), _) =>
+      messageHandler ! GetTxData(List(hash))
+      stay
+
+    case Event(invEntry: InvEntry, _) =>
+      invs ::= invEntry
+      stay
+
+    case Event(InvBroadcast, _) =>
+      messageHandler ! Inv(invs)
+      invs = Nil
       stay
   }
 
@@ -117,10 +139,17 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
     case _ =>
       stay using d
   }
+
+  override def postStop() = {
+    invBroadcastCancel.cancel()
+    pingCancel.cancel()
+  }
 }
 
 object Peer {
   val timeout = 5.second
+  val invBroadcast = 1.second
+  val heartbeat = 5.minute
 
   case class GetBlocks(hsd: List[HeaderSyncData])
   case class Handshaked(height: Int)
@@ -133,6 +162,9 @@ object Peer {
   trait Data
   case class HandshakeData(height: Option[Int], ackReceived: Boolean) extends Data
   case class ReplyToData(replyTo: ActorRef) extends Data
+
+  case class GetTx(hash: Hash)
+  case object InvBroadcast
 }
 
 case class PeerAddress(timestamp: Instant, address: InetSocketAddress, used: Boolean)
@@ -160,6 +192,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
 
   implicit val blockStore = new BlockStore(settings)
   val downloadManager = new DownloadManager(context)
+  val txPool = new TxPool(db, blockchain.chainRev.head)
 
   def receive: Receive = ({
     case sfp @ SyncFromPeer(peer, hash) =>
@@ -178,6 +211,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
   def syncingReceive(peer: ActorRef): Receive = {
     case _: SyncFromPeer => stash()
     case SyncCompleted =>
+      txPool.setTip(blockchain.chainRev.head)
       unstashAll()
       context.unbecome()
   }
@@ -188,6 +222,32 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       for {
         hash <- invBlocks(inv) if getHeaderSync(hash).isEmpty
       } self ! SyncFromPeer(peer, hash)
+      for {
+        hash <- invTxs(inv)
+      } txPool.doRequestTx(hash, peer)
+
+    case tx: Tx =>
+      if (txPool.addUnconfirmedTx(tx).isDefined)
+        peersConnected.keys foreach (_ ! InvEntry(1, tx.hash))
+
+    case GetHeaders(hashes, _) =>
+      hashes.map { h => blockchain.chain.dropWhile(!_.blockHeader.hash.sameElements(h)) }.find(!_.isEmpty).foreach { headers =>
+        sender ! OutgoingMessage(Headers(headers.tail.map(_.blockHeader)))
+      }
+
+    case GetTxData(hashes) =>
+      for {
+        hash <- hashes
+        txOpt <- txPool.pool.get(new WHash(hash))
+        tx <- txOpt
+      } sender ! OutgoingMessage(tx)
+
+    case GetBlockData(hashes) =>
+      for {
+        hash <- hashes
+        hsd <- blockchain.chainRev.find(hsd => hsd.blockHeader.hash.sameElements(hash))
+        block <- blockStore.loadBlockOpt(hash, hsd.height)
+      } sender ! OutgoingMessage(block)
 
     case addr: Addr =>
       addr.addrs.foreach(addr => self ! AddPeer(PeerAddress(addr.timestamp, addr.addr, false)))
@@ -228,7 +288,8 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       peerStates = peerStates.updated(peerId, PeerState.Ready)
       log.info(s"Handshake from ${peer}")
       downloadManager.addPeer(peer)
-      self ! SyncFromPeer(peer, zeroHash)
+      if (height > blockchain.chainRev.head.height)
+        self ! SyncFromPeer(peer, zeroHash)
 
     case Terminated(peer) =>
       val peerId = peersConnected(peer)
@@ -301,15 +362,22 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
     case other => context.parent ! other
   }
 
-  private def parse(mh: MessageHeader): Option[BitcoinMessage] = {
+  private def parse(mh: MessageHeader): List[BitcoinMessage] = {
     mh.command match {
-      case "version" => Some(Version.parse(mh.payload))
-      case "verack" => Some(Verack)
-      case "headers" => Some(Headers.parse(mh.payload))
-      case "block" => Some(Block.parse(mh.payload))
-      case "inv" => Some(Inv.parse(mh.payload))
-      case "addr" => Some(Addr.parse(mh.payload))
-      case _ => None
+      case "version" => List(Version.parse(mh.payload))
+      case "verack" => List(Verack)
+      case "headers" => List(Headers.parse(mh.payload))
+      case "block" => List(Block.parse(mh.payload))
+      case "inv" => List(IncomingMessage(Inv.parse(mh.payload)))
+      case "addr" => List(IncomingMessage(Addr.parse(mh.payload)))
+      case "tx" => List(IncomingMessage(Tx.parse(mh.payload.iterator)))
+      case "getheaders" => List(IncomingMessage(GetHeaders.parse(mh.payload)))
+      case "getdata" =>
+        val (getTxData, getBlockData) = GetData.parse(mh.payload)
+        List(getTxData, getBlockData).filter(!_.hashes.isEmpty).map(IncomingMessage(_))
+      case "ping" => List(PingPong.parse(mh.payload, Ping).asInstanceOf[Ping])
+      // case "reject" => List(Reject.parse(mh.payload)) // Skip reject messages (too many of them)
+      case _ => Nil
     }
   }
 }

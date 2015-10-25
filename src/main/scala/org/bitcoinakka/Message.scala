@@ -229,7 +229,7 @@ object Headers {
   }
 }
 
-class GetData(tpe: Int, hashes: List[Hash]) extends BitcoinMessage {
+class GetData(tpe: Int, val hashes: List[Hash]) extends BitcoinMessage {
   override val command: String = "getdata"
   override def toByteString(): ByteString = {
     val bb = new ByteStringBuilder
@@ -254,8 +254,8 @@ object GetData {
     (GetTxData(bhs.filter(_.tpe == 1).map(_.hash)), GetBlockData(bhs.filter(_.tpe == 2).map(_.hash)))
   }
 }
-case class GetTxData(hashes: List[Hash]) extends GetData(1, hashes)
-case class GetBlockData(hashes: List[Hash]) extends GetData(2, hashes)
+case class GetTxData(_hashes: List[Hash]) extends GetData(1, _hashes)
+case class GetBlockData(_hashes: List[Hash]) extends GetData(2, _hashes)
 
 case class Block(header: BlockHeader, txs: Array[Tx], payload: ByteString) extends BitcoinMessage {
   override val command: String = "block"
@@ -478,4 +478,62 @@ object Addr {
       AddrEntry(timestamp, new InetSocketAddress(addr, port))
     }).toList)
   }
+}
+
+case class Reject(message: String, code: Byte, reason: String, hash: Hash) extends BitcoinMessage {
+  val command = "reject"
+  def toByteString() = ???
+  override def toString() = s"Reject(${message},${code},${reason},${hashToString(hash)})"
+}
+object Reject {
+  def parse(bs: ByteString) = {
+    val bi = bs.iterator
+    val message = bi.getVarString
+    val code = bi.getByte
+    val reason = bi.getVarString
+    val hash = if (!bi.isEmpty) bi.getHash else zeroHash.array
+    Reject(message, code, reason, hash)
+  }
+}
+
+abstract class PingPong(val nonce: Long) extends BitcoinMessage {
+  override def toByteString(): ByteString = {
+    val bb = new ByteStringBuilder
+    bb.putLong(nonce)
+    bb.result()
+  }
+}
+object PingPong {
+  def parse[T <: PingPongBuilder](bs: ByteString, builder: T): PingPong = {
+    val bi = bs.iterator
+    val nonce = bi.getLong
+    builder.create(nonce)
+  }
+}
+
+class Ping(nonce: Long) extends PingPong(nonce) {
+  val command = "ping"
+}
+class Pong(nonce: Long) extends PingPong(nonce) {
+  val command = "pong"
+}
+
+trait PingPongBuilder {
+  def create(nonce: Long): PingPong
+}
+object Ping extends PingPongBuilder {
+  def create(nonce: Long) = new Ping(nonce)
+}
+object Pong extends PingPongBuilder {
+  def create(nonce: Long) = new Pong(nonce)
+}
+
+case class IncomingMessage(m: BitcoinMessage) extends BitcoinMessage {
+  val command = m.command
+  def toByteString = m.toByteString()
+}
+
+case class OutgoingMessage(m: BitcoinMessage) extends BitcoinMessage {
+  val command = m.command
+  def toByteString = m.toByteString()
 }

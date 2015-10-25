@@ -1,11 +1,12 @@
 package org.bitcoinakka
 
-import java.nio.ByteOrder
 import java.time.Instant
 
+import akka.actor.ActorRef
 import akka.util.ByteString
 import BitcoinMessage._
 import org.apache.commons.codec.binary.Hex
+import org.slf4j.LoggerFactory
 
 import scalaz.EphemeralStream
 
@@ -83,4 +84,39 @@ object Blockchain {
   val genesisHash = netParams.genesisHash
   val genesisBlockHeader = netParams.genesisBlockHeader
   val firstDifficultyAdjustment = netParams.firstDifficultyAdjustment
+}
+
+class TxPool(db: UTXODb, currentTip: HeaderSyncData) {
+  val log = LoggerFactory.getLogger(getClass)
+  var pool = Map.empty[WHash, Option[Tx]]
+  val memUTXO = new InMemUTXODb(db)
+  var currentBlockHeaderData: HeaderSyncData = currentTip
+
+  def setTip(hsd: HeaderSyncData) = {
+    log.info(s"Clearing Mempool of ${pool.size} transactions")
+    currentBlockHeaderData = hsd
+    memUTXO.clear()
+    pool = Map.empty
+  }
+
+  def addUnconfirmedTx(tx: Tx): Option[Unit] = {
+    log.debug(s"Adding unconfirmed tx ${tx}")
+    for {
+      _ <- Consensus.checkTx(tx, -1, currentBlockHeaderData.height, currentBlockHeaderData.blockHeader.timestamp.getEpochSecond, memUTXO)
+    } yield {
+      pool = pool.updated(new WHash(tx.hash), Some(tx))
+    }
+  }
+
+  def doRequestTx(hash: Hash, peer: ActorRef) = {
+    val wHash = new WHash(hash)
+    if (!pool.contains(wHash)) {
+      pool += wHash -> None
+      peer ! Peer.GetTx(hash)
+    }
+  }
+}
+
+object TxPool {
+  case class UnconfirmedTx(hash: Hash, peer: ActorRef)
 }
