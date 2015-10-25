@@ -1,0 +1,83 @@
+@startuml message-classes.png
+
+BitcoinMessage <|-- Version
+BitcoinMessage <|-- Verack
+BitcoinMessage <|-- GetHeaders
+BitcoinMessage <|-- Headers
+BitcoinMessage <|-- GetData
+BitcoinMessage <|-- BlockHeader
+BitcoinMessage <|-- Block
+
+@enduml
+
+@startuml connection.png
+participant Initiator
+participant "IO(Tcp)"
+participant Handler
+participant Connection
+
+Initiator -> "IO(Tcp)": Connect to peer
+"IO(Tcp)" -> Connection: << create >>
+activate Connection
+Connection --> Initiator: Connected
+Initiator -> Handler: << create passing Connection >>
+activate Handler
+Handler -> Connection: Register
+Handler -> Connection: Send Tcp.Write
+Connection --> Handler: Receive Tcp.Received
+Handler -> Connection: Close
+Connection --> Handler: ConnectionClosed
+destroy Connection
+destroy Handler
+@enduml
+
+@startuml blockchain-seq.png
+participant Alice
+participant Bob
+
+== Headers ==
+Alice -> Bob: GetHeaders
+Bob --> Alice: Headers
+
+== Blocks == 
+Alice -> Bob: GetData
+Bob --> Alice: Block
+Bob --> Alice: Block
+Bob --> Alice: ...
+@enduml
+
+@startuml blockchain-msg.png
+Headers *-> "*" BlockHeader
+GetData *-> "*" InvEntry
+
+Block *--> BlockHeader
+Block *--> "*" Tx
+
+Tx *--> "*" TxIn
+Tx *--> "*" TxOut
+
+TxIn *-> OutPoint
+@enduml
+
+@startuml sync.png
+class Sync
+
+Sync o--> SyncPersist
+Sync *--> SyncDataProvider
+@enduml
+
+@startuml peer-states-1.png
+[*] --> Ready : Handshake
+Ready --> GettingHeaders : GetHeaders
+GettingHeaders --> Ready : Headers
+Ready --> GettingBlocks : GetData
+GettingBlocks --> Ready : Block
+@enduml
+
+@startuml peer-connection-states-1.png
+[*] --> Connecting : Connect sent
+Connecting --> Connected : Connect successful
+Connected --> Ready : Handshake done
+Ready --> Busy : Working on a request
+Busy --> Ready : Finished work
+@enduml

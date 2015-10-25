@@ -1,0 +1,8 @@
+_site/
+Gemfile.lock
+plantuml.jar
+.idea/
+target/
+src/
+console.log
+

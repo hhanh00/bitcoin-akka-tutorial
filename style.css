@@ -1,0 +1,9 @@
+ul.site-footer-links {
+  padding: 0;
+  box-sizing: border-box;
+}
+.site-footer-links li {
+  margin-left: 20px;
+  display: inline-block;  
+  -webkit-padding-start: 0px;
+} 
