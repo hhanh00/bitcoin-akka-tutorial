@@ -62,7 +62,7 @@ object MainNet extends BitcoinNetParams {
 object RegTestNet extends BitcoinNetParams {
   val magic = 0xDAB5BFFA
   val genesisHash = new WHash(hashFromString("0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"))
-  val genesisBlockHeader = BlockHeader(genesisHash.array, 1, zeroHash.array, hashFromString("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"),
+  val genesisBlockHeader = BlockHeader(genesisHash.array, 1, zeroHash, hashFromString("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"),
     Instant.ofEpochSecond(1296688602), 545259519, 2, 0)
   val firstDifficultyAdjustment = 0
 }

@@ -52,7 +52,8 @@ trait Sync { self: SyncPersist =>
       (goodHeaders, badHeaders) = validateHeaders(headersSyncData)
       _ <- isBetter(goodHeaders)
       _ <- provider.downloadBlocks(goodHeaders.tail)
-      (goodBlocks, badBlocks, undo) = validateBlocks(headersSyncData)
+      (goodBlocks, badBlocks, undo) = validateBlocks(goodHeaders)
+      _ <- isBetter(goodBlocks).transform(identity, t => { rollback(undo); t })
     } yield {
         updateMain(goodBlocks)
         true
@@ -60,8 +61,11 @@ trait Sync { self: SyncPersist =>
 
     f recover {
       case _: java.util.NoSuchElementException => false
+      case _: ForkHasLessPOW => false
     }
   }
+
+  private def rollback(undo: List[UTXOOperation]) = undo.foreach(_.undo(db))
 
   private def isBetter(chain: List[HeaderSyncData]): Future[Unit] = {
     val currentPOW = blockchain.chainRev.head.pow
@@ -169,10 +173,59 @@ trait Sync { self: SyncPersist =>
     StateT[Trampoline, BlockCheckData, Boolean] { checkData =>
       log.info(s"++ checkBlockData ${header}")
       val block = blockStore.loadBlock(header.blockHeader.hash, header.height)
-      val op = updateUTXODb(block, header.height)
-      Trampoline.done((checkData copy (txLog = op :: checkData.txLog), true))
+      val r = for {
+        _ <- checkBlock(block)
+        _ <- checkBlockContents(block, header.height)
+      } yield ()
+      val (updatedCheckData, result) = r.run(checkData)
+      Trampoline.done((updatedCheckData, result.isDefined))
       }
     }
+
+  private def checkBlock(block: Block): BlockCheckStateOption[Unit] = {
+    val r = for {
+      _ <- checkSize(block)
+      _ <- (block.txs.length > 0).option(())
+      txHashesArray = block.txs.map(tx => hashToString(tx.hash)).toList
+      txHashesSet = txHashesArray.toSet
+      _ <- (txHashesSet.size == block.txs.size).option(())
+      _ <- checkMerkleRoot(block)
+    } yield ()
+
+    val x = r.point[BlockCheckState]
+    OptionT.optionT(x)
+  }
+
+  private def checkBlockContents(block: Block, height: Int) = {
+    val x: BlockCheckState[Option[Unit]] = State[BlockCheckData, Option[Unit]] { checkData =>
+      val utxoDb = new InMemUTXODb(db)
+
+      val feesAndSighashCheckCount = block.txs.zipWithIndex.map { case (tx, i) =>
+        val fee = Consensus.checkTx(tx, i, height, block.header.timestamp.getEpochSecond, utxoDb)
+        fee foreach { _ =>
+          val utxoEntries = UTXO.ofTx(tx, i == 0, height)
+          utxoEntries.foreach(utxoDb.add)
+        }
+        fee
+      }
+
+      val r = for {
+        _ <- (feesAndSighashCheckCount.forall(_.isDefined)).option(())
+        (totalFees, totalSighashCheckCount) = feesAndSighashCheckCount.map(_.get).reduceLeft { (a, b) => (a._1 + b._1, a._2 + b._2) }
+        _ = log.debug(s"Sighash check count = ${totalSighashCheckCount}")
+        _ <- (totalSighashCheckCount <= Consensus.maxSighashCheckCount).option(())
+        _ <- Consensus.checkCoinbase(block.txs(0), height, totalFees)
+      } yield ()
+
+      if (r.isDefined) {
+        val op = updateUTXODb(block, height)
+        (checkData copy (txLog = op :: checkData.txLog), r)
+      }
+      else (checkData, r)
+    }
+
+    OptionT.optionT(x)
+  }
 
   private def updateMain(chain: List[HeaderSyncData]) = {
     chain match {

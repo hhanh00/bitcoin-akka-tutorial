@@ -272,6 +272,7 @@ object PeerManager extends App {
   val log = LoggerFactory.getLogger(getClass)
 
   Class.forName("com.mysql.jdbc.Driver")
+  System.loadLibrary("consensus-jni")
 
   implicit val system = ActorSystem()
   implicit val settings = AppSettings(system)
@@ -331,7 +332,7 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
     val p = Promise[Headers]()
     context.actorOf(Props(new Actor {
       context watch syncPeer
-      syncPeer ! GetHeaders(locators, zeroHash.array)
+      syncPeer ! GetHeaders(locators, zeroHash)
 
       def receive: Receive = {
         case headers: Headers =>
