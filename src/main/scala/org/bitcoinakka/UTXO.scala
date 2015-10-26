@@ -46,10 +46,8 @@ class InMemUTXODb(underlyingDb: UTXODb) extends UTXODb {
     val k = new WHash(entry.key.toByteString().toArray)
     entry.value match {
       case Some(e) =>
-        log.debug(s"Adding ${entry.key}")
         map.put(k, e.toByteString().toArray)
       case None =>
-        log.debug(s"Removing ${entry.key}")
         map.put(k, Array.empty)
     }
   }

@@ -1,0 +1,1 @@
+"C:\MinGW64\bin\gcc.exe" -m64 -I"C:\Program Files\Java\jdk1.8.0_51\include" -I"C:\Program Files\Java\jdk1.8.0_51\include\win32" -I"include" -Wall -D_JNI_IMPLEMENTATION_ -Wl,--kill-at -shared -o consensus-jni.dll consensus-jni.c -L"lib" -lbitcoinconsensus-0
