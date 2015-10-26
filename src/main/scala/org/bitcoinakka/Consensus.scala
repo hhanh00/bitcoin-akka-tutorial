@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory
 import scalaz.syntax.std.boolean._
 
 object Consensus {
+
   val log = LoggerFactory.getLogger(getClass)
   val difficultyAdjustmentInterval = 2016
   val targetElapsed = 600*difficultyAdjustmentInterval // 10 mn average per block

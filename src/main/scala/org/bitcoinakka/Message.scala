@@ -1,6 +1,6 @@
 package org.bitcoinakka
 
-import java.net.{InetAddress, InetSocketAddress}
+import java.net.{Inet6Address, Inet4Address, InetAddress, InetSocketAddress}
 import java.nio.{ByteBuffer, ByteOrder}
 import java.security.MessageDigest
 import java.time.Instant
@@ -8,7 +8,7 @@ import java.time.Instant
 import akka.util.{ByteIterator, ByteString, ByteStringBuilder}
 import org.apache.commons.codec.binary.Hex
 import org.apache.commons.lang3.StringUtils
-import org.bitcoinakka.BitcoinMessage._
+import BitcoinMessage._
 
 import scala.language.postfixOps
 
@@ -35,7 +35,7 @@ trait BitcoinMessage extends ByteOrderImplicit {
 
 object BitcoinMessage extends ByteOrderImplicit {
   val magic = 0xD9B4BEF9
-  val version = 70001
+  val version = 70000
   type Hash = Array[Byte]
   type WHash = collection.mutable.WrappedArray.ofByte
   type Script = Array[Byte]
@@ -78,6 +78,22 @@ object BitcoinMessage extends ByteOrderImplicit {
         bb.putInt(i)
       }
     }
+    def putInetSocketAddress(address: InetSocketAddress) = {
+      bb.putLong(1)
+      val addr = address.getAddress
+      addr match {
+        case _: Inet4Address =>
+          bb.putLong(0)
+          bb.putInt(0xFFFF0000)
+        case _: Inet6Address =>
+      }
+      bb.putBytes(addr.getAddress)
+      bb.putShort(address.getPort)
+    }
+    def putBlockHeader(bh: BlockHeader) = {
+      bb.append(bh.toByteString())
+      bb.putVarInt(0)
+    }
   }
 
   implicit class ByteStringIteratorExt(bi: ByteIterator) {
@@ -107,6 +123,19 @@ object BitcoinMessage extends ByteOrderImplicit {
       bi.getBytes(script)
       script
     }
+    def getInetSocketAddress: InetSocketAddress = {
+      bi.drop(8)
+      val addrBytes: Array[Byte] = new Array(16)
+      bi.getBytes(addrBytes)
+      val addr = InetAddress.getByAddress(addrBytes)
+      val port: Int = bi.getShort(ByteOrder.BIG_ENDIAN).toInt & 0xFFFF
+      new InetSocketAddress(addr, port)
+    }
+    def getBlockHeader: BlockHeader = {
+      val hashedPart = bi.clone.slice(0, 80).toArray[Byte]
+      val blockHash = dsha(hashedPart)
+      BlockHeader.parse(bi, blockHash, true)
+    }
   }
 
   implicit class toWHash(hash: Hash) {
@@ -114,148 +143,16 @@ object BitcoinMessage extends ByteOrderImplicit {
   }
 }
 
-case class Version(version: Int, services: Long, timestamp: Long, recv: Array[Byte], from: Array[Byte], nonce: Long, userAgent: String, height: Int, relay: Byte) extends BitcoinMessage {
-  import BitcoinMessage.ByteStringBuilderExt
-  val command = "version"
-  def toByteString(): ByteString = {
-    val bb = new ByteStringBuilder
-    bb.putInt(version)
-    bb.putLong(services)
-    bb.putLong(timestamp)
-    bb.putBytes(recv)
-    bb.putBytes(from)
-    bb.putLong(nonce)
-    bb.putVarString(userAgent)
-    bb.putInt(height)
-    bb.putByte(relay)
-    bb.result()
-  }
+class InternalBitcoinMessage(val hashes: List[Hash]) extends BitcoinMessage {
+  val command = ""
+  def toByteString() = ???
 }
-object Version extends ByteOrderImplicit {
-  import BitcoinMessage.ByteStringIteratorExt
-  def apply(version: Int, recv: InetSocketAddress, from: InetSocketAddress, nonce: Long, userAgent: String, height: Int, relay: Byte) = {
-    val now = Instant.now
-    new Version(version, 1L, now.getEpochSecond, NetworkAddress(recv).toByteArray(), NetworkAddress(from).toByteArray(), nonce, userAgent, height, relay)
-  }
-  def parse(bs: ByteString) = {
-    val iter = bs.iterator
-    val version = iter.getInt
-    val services = iter.getLong
-    val timestamp = iter.getLong
-    val recv = new Array[Byte](26)
-    iter.getBytes(recv)
-    val from = new Array[Byte](26)
-    iter.getBytes(from)
-    val nonce = iter.getLong
-    val userAgent = iter.getVarString
-    val height = iter.getInt
-    val relay =
-      if (iter.isEmpty)
-        0.toByte
-      else
-        iter.getByte
-    Version(version, services, timestamp, recv, from, nonce, userAgent, height, relay)
-  }
+case class GetTxData(_hashes: List[Hash]) extends InternalBitcoinMessage(_hashes) {
+  def toGetData() = GetData(hashes.map(InvEntry(1, _)))
 }
-
-case object Verack extends BitcoinMessage {
-  val command = "verack"
-  def toByteString() = ByteString.empty
+case class GetBlockData(_hashes: List[Hash]) extends InternalBitcoinMessage(_hashes)  {
+  def toGetData() = GetData(hashes.map(InvEntry(2, _)))
 }
-
-case class NetworkAddress(address: InetSocketAddress) extends ByteOrderImplicit {
-  def toByteArray(): Array[Byte] = {
-    val bb = new ByteStringBuilder
-    bb.putLong(0)
-    bb.putLong(0)
-    bb.putInt(0xFFFF0000)
-    bb.putBytes(address.getAddress.getAddress)
-    bb.putShort(address.getPort)
-    bb.result().toArray[Byte]
-  }
-}
-
-case class GetHeaders(hashes: List[Hash], stopHash: Hash) extends BitcoinMessage {
-  override val command: String = "getheaders"
-  override def toByteString(): ByteString = {
-    val bb = new ByteStringBuilder
-    bb.putInt(version)
-    bb.putVarInt(hashes.length)
-    for { h <- hashes} {
-      bb.putBytes(h)
-    }
-    bb.putBytes(stopHash)
-    bb.result()
-  }
-}
-object GetHeaders {
-  def parse(bs: ByteString): GetHeaders = {
-    val iter = bs.iterator
-    iter.getInt
-    val count = iter.getVarInt
-    val hashes = (for { _ <- 0 until count } yield {
-      iter.getHash
-    }) toList
-    val stopHash = iter.getHash
-
-    GetHeaders(hashes, stopHash)
-  }
-}
-
-case class Headers(blockHeaders: List[BlockHeader]) extends BitcoinMessage {
-  override val command: String = "headers"
-  override def toByteString(): ByteString = {
-    val bb = new ByteStringBuilder
-    bb.putVarInt(blockHeaders.length)
-    for { bh <- blockHeaders } {
-      bb.append(bh.toByteString())
-      bb.putVarInt(0)
-    }
-    bb.result()
-  }
-  def isEmpty = blockHeaders.isEmpty
-}
-object Headers {
-  def parse(bs: ByteString): Headers = {
-    val iter = bs.iterator
-    val count = iter.getVarInt
-    val bhs = (for { _ <- 0 until count } yield {
-      val hashedPart = iter.clone.slice(0, 80).toArray[Byte]
-      val blockHash = dsha(hashedPart)
-      BlockHeader.parse(iter, blockHash, true)
-    }) toList
-
-    Headers(bhs)
-  }
-}
-
-class GetData(tpe: Int, val hashes: List[Hash]) extends BitcoinMessage {
-  override val command: String = "getdata"
-  override def toByteString(): ByteString = {
-    val bb = new ByteStringBuilder
-    bb.putVarInt(hashes.length)
-    for { h <- hashes} {
-      bb.putInt(tpe)
-      bb.putBytes(h)
-    }
-    bb.result()
-  }
-}
-object GetData {
-  def parse(bs: ByteString): (GetTxData, GetBlockData) = {
-    val iter = bs.iterator
-    val count = iter.getVarInt
-    val bhs = (for { _ <- 0 until count } yield {
-      val tpe = iter.getInt
-      val hash = iter.getHash
-      InvEntry(tpe, hash)
-    }) toList
-
-    (GetTxData(bhs.filter(_.tpe == 1).map(_.hash)), GetBlockData(bhs.filter(_.tpe == 2).map(_.hash)))
-  }
-}
-case class GetTxData(_hashes: List[Hash]) extends GetData(1, _hashes)
-case class GetBlockData(_hashes: List[Hash]) extends GetData(2, _hashes)
 
 case class Block(header: BlockHeader, txs: Array[Tx], payload: ByteString) extends BitcoinMessage {
   override val command: String = "block"
@@ -274,102 +171,29 @@ object Block {
     val hashedPart = iter.clone.slice(0, 80).toArray
     val blockHash = dsha(hashedPart)
     val bh = BlockHeader.parse(iter, blockHash, true)
-    val txs = Array.range(0, bh.txCount).map { _ => Tx.parse(iter) }
+    val txs = Array.range(0, bh.txCount).map { _ => Tx.parseBI(iter) }
     Block(bh, txs, bs)
   }
 }
 
-case class Tx(hash: Hash, version: Int, txIns: Array[TxIn], txOuts: Array[TxOut], lockTime: Int) extends BitcoinMessage {
+case class Tx(hash: Hash, version: Int, txIns: List[TxIn], txOuts: List[TxOut], lockTime: Int) extends BitcoinMessage {
   val command = "tx"
   def toByteString() = {
-    val bb = new ByteStringBuilder
-    bb.putInt(version)
-    bb.putVarInt(txIns.length)
-    for { txIn <- txIns } {
-      bb.append(txIn.toByteString())
-    }
-    bb.putVarInt(txOuts.length)
-    for { txOut <- txOuts } {
-      bb.append(txOut.toByteString())
-    }
-    bb.putInt(lockTime)
-    bb.result()
+    val itx = InternalTx(version, txIns, txOuts, lockTime)
+    itx.toByteString()
   }
   override def toString() = s"Tx(${hashToString(hash)}, ${txIns.size} -> ${txOuts.size})"
 }
 object Tx {
-  def parse(bi: ByteIterator) = {
+  def parseBI(bi: ByteIterator) = {
     val mark = bi.len
     val biCopy = bi.clone()
-    val version = bi.getInt
-    val txInCount = bi.getVarInt
-    val txIns = Array.range(0, txInCount) map { _ => TxIn.parse(bi) }
-    val txOutCount = bi.getVarInt
-    val txOuts = Array.range(0, txOutCount) map { _ => TxOut.parse(bi) }
-    val lockTime = bi.getInt
+    val itx: InternalTx = InternalTx.parseBI(bi)
     val txLen = mark-bi.len
     val txBytes = biCopy.slice(0, txLen).toArray
     val txHash = dsha(txBytes)
-    Tx(txHash, version, txIns, txOuts, lockTime)
+    Tx(txHash, itx.version, itx.txIns, itx.txOuts, itx.lockTime)
   }
-}
-
-case class TxIn(prevOutPoint: OutPoint, sigScript: Script, sequence: Int) extends BitcoinMessage {
-  val command = "txin"
-  def toByteString() = {
-    val bb = new ByteStringBuilder
-    bb.append(prevOutPoint.toByteString())
-    bb.putScript(sigScript)
-    bb.putInt(sequence)
-    bb.result()
-  }
-}
-object TxIn {
-  def parse(bi: ByteIterator): TxIn = {
-    val outpoint = OutPoint.parse(bi)
-    val sigScript = bi.getScript
-    val sequence = bi.getInt
-    TxIn(outpoint, sigScript, sequence)
-  }
-}
-
-case class TxOut(value: Long, script: Script) extends BitcoinMessage {
-  val command = "txout"
-  def toByteString() = {
-    val bb = new ByteStringBuilder
-    bb.putLong(value)
-    bb.putScript(script)
-    bb.result()
-  }
-}
-object TxOut {
-  def parse(bi: ByteIterator): TxOut = {
-    val value = bi.getLong
-    val script = bi.getScript
-    TxOut(value, script)
-  }
-}
-
-case class OutPoint(hash: Hash, index: Int) extends BitcoinMessage {
-  val command = "outpoint"
-  def toByteString() = {
-    val bb = new ByteStringBuilder
-    bb.putBytes(hash)
-    bb.putInt(index)
-    bb.result()
-  }
-  override def toString() = s"OutPoint(${hashToString(hash)}, $index)"
-}
-object OutPoint {
-  def parse(bi: ByteIterator): OutPoint = {
-    val hash = bi.getHash
-    val index = bi.getInt
-    OutPoint(hash, index)
-  }
-}
-
-case class InvEntry(tpe: Int, hash: Hash) {
-  override def toString() = s"Inv(${tpe} ${hashToString(hash)})"
 }
 
 case class BlockHeader(hash: Hash, version: Int, prevHash: Hash, merkleRoot: Hash, timestamp: Instant, bits: Int, nonce: Int, txCount: Int) extends BitcoinMessage {
@@ -377,14 +201,8 @@ case class BlockHeader(hash: Hash, version: Int, prevHash: Hash, merkleRoot: Has
   val target = BlockHeader.getTarget(bits)
   val pow = BlockHeader.maxHash/target
   override def toByteString(): ByteString = {
-    val bb = new ByteStringBuilder
-    bb.putInt(version)
-    bb.putBytes(prevHash)
-    bb.putBytes(merkleRoot)
-    bb.putInt(timestamp.getEpochSecond.toInt)
-    bb.putInt(bits)
-    bb.putInt(nonce)
-    bb.result() // NB: txCount is not saved!
+    val ibh = InternalBlockHeader(version, prevHash, merkleRoot, timestamp, bits, nonce)
+    ibh.toByteString() // NB: txCount is not saved!
   }
   override def toString() = s"BlockHeader(${hashToString(hash)}, ${hashToString(prevHash)})"
 }
@@ -392,14 +210,9 @@ case class BlockHeader(hash: Hash, version: Int, prevHash: Hash, merkleRoot: Has
 object BlockHeader {
   val maxHash = BigInt(0).setBit(256)
   def parse(bi: ByteIterator, blockHash: Hash, readTxCount: Boolean): BlockHeader = {
-    val version = bi.getInt
-    val prevHash = bi.getHash
-    val merkleRoot = bi.getHash
-    val timestamp = Instant.ofEpochSecond(bi.getInt)
-    val bits = bi.getInt
-    val nonce = bi.getInt
+    val ibh: InternalBlockHeader = InternalBlockHeader.parseBI(bi)
     val txCount = if (readTxCount) bi.getVarInt else 0
-    BlockHeader(blockHash, version, prevHash, merkleRoot, timestamp, bits, nonce, txCount)
+    BlockHeader(blockHash, ibh.version, ibh.prevHash, ibh.merkleRoot, ibh.timestamp, ibh.bits, ibh.nonce, txCount)
   }
 
   def getBits(target: BigInt): Int = {
@@ -429,105 +242,6 @@ object BlockHeader {
   }
 }
 
-case class Inv(invs: List[InvEntry]) extends BitcoinMessage {
-  val command = "inv"
-  def toByteString() = {
-    val bb = new ByteStringBuilder
-    bb.putVarInt(invs.length)
-    for { inv <- invs } {
-      bb.putInt(inv.tpe)
-      bb.putBytes(inv.hash)
-    }
-    bb.result()
-  }
-}
-object Inv {
-  def parse(bs: ByteString) = {
-    val bi = bs.iterator
-    val count = bi.getVarInt
-    Inv((for { _ <- 0 until count } yield {
-      val tpe = bi.getInt
-      val hash = bi.getHash
-      InvEntry(tpe, hash)
-    }).toList)
-  }
-}
-
-case object GetAddr extends BitcoinMessage {
-  val command = "getaddr"
-  def toByteString() = ByteString.empty
-}
-
-case class Addr(addrs: List[AddrEntry]) extends BitcoinMessage {
-  val command = "addr"
-  def toByteString() = ???
-}
-case class AddrEntry(timestamp: Instant, addr: InetSocketAddress)
-object Addr {
-  def parse(bs: ByteString) = {
-    val bi = bs.iterator
-    val count = bi.getVarInt
-    Addr((for { _ <- 0 until count } yield {
-      val t = bi.getInt
-      val timestamp = Instant.ofEpochSecond(t)
-      bi.drop(8)
-      val addrBytes: Array[Byte] = new Array(16)
-      bi.getBytes(addrBytes)
-      val addr = InetAddress.getByAddress(addrBytes)
-      val port: Int = bi.getShort(ByteOrder.BIG_ENDIAN).toInt & 0xFFFF
-      AddrEntry(timestamp, new InetSocketAddress(addr, port))
-    }).toList)
-  }
-}
-
-case class Reject(message: String, code: Byte, reason: String, hash: Hash) extends BitcoinMessage {
-  val command = "reject"
-  def toByteString() = ???
-  override def toString() = s"Reject(${message},${code},${reason},${hashToString(hash)})"
-}
-object Reject {
-  def parse(bs: ByteString) = {
-    val bi = bs.iterator
-    val message = bi.getVarString
-    val code = bi.getByte
-    val reason = bi.getVarString
-    val hash = if (!bi.isEmpty) bi.getHash else zeroHash.array
-    Reject(message, code, reason, hash)
-  }
-}
-
-abstract class PingPong(val nonce: Long) extends BitcoinMessage {
-  override def toByteString(): ByteString = {
-    val bb = new ByteStringBuilder
-    bb.putLong(nonce)
-    bb.result()
-  }
-}
-object PingPong {
-  def parse[T <: PingPongBuilder](bs: ByteString, builder: T): PingPong = {
-    val bi = bs.iterator
-    val nonce = bi.getLong
-    builder.create(nonce)
-  }
-}
-
-class Ping(nonce: Long) extends PingPong(nonce) {
-  val command = "ping"
-}
-class Pong(nonce: Long) extends PingPong(nonce) {
-  val command = "pong"
-}
-
-trait PingPongBuilder {
-  def create(nonce: Long): PingPong
-}
-object Ping extends PingPongBuilder {
-  def create(nonce: Long) = new Ping(nonce)
-}
-object Pong extends PingPongBuilder {
-  def create(nonce: Long) = new Pong(nonce)
-}
-
 case class IncomingMessage(m: BitcoinMessage) extends BitcoinMessage {
   val command = m.command
   def toByteString = m.toByteString()
@@ -537,3 +251,21 @@ case class OutgoingMessage(m: BitcoinMessage) extends BitcoinMessage {
   val command = m.command
   def toByteString = m.toByteString()
 }
+
+@MessageMacro case class Version(version: Int, services: Long, timestamp: Long, recv: InetSocketAddress, from: InetSocketAddress, nonce: Long, userAgent: String, height: Int)
+@MessageMacro case class Verack()
+@MessageMacro case class GetHeaders(version: Int, hashes: List[Hash], stopHash: Hash)
+@MessageMacro case class Headers(blockHeaders: List[BlockHeader])
+@MessageMacro case class InvEntry(tpe: Int, hash: Hash)
+@MessageMacro case class GetData(invs: List[InvEntry])
+@MessageMacro case class OutPoint(hash: Hash, index: Int)
+@MessageMacro case class TxIn(prevOutPoint: OutPoint, sigScript: Script, sequence: Int)
+@MessageMacro case class TxOut(value: Long, script: Script)
+@MessageMacro case class InternalTx(version: Int, txIns: List[TxIn], txOuts: List[TxOut], lockTime: Int)
+@MessageMacro case class InternalBlockHeader(version: Int, prevHash: Hash, merkleRoot: Hash, timestamp: Instant, bits: Int, nonce: Int)
+@MessageMacro case class Inv(invs: List[InvEntry])
+@MessageMacro case class GetAddr()
+@MessageMacro case class Addr(addrs: List[AddrEntry])
+@MessageMacro case class AddrEntry(timestamp: Instant, addr: InetSocketAddress)
+@MessageMacro case class Ping(nonce: Long)
+@MessageMacro case class Pong(nonce: Long)

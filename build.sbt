@@ -17,13 +17,17 @@ libraryDependencies ++= Seq(
 	"org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.3",
 	"org.apache.logging.log4j" % "log4j-api" % "2.3",
 	"org.apache.logging.log4j" % "log4j-core" % "2.3",
+	"org.scala-lang" % "scala-reflect" % scalaVersion.value,
 	"com.typesafe.akka" %% "akka-testkit" % "2.4.0" % "test",
 	"org.scalatest" %% "scalatest" % "2.2.4" % "test",
 	"org.bitcoinj" % "bitcoinj-core" % "0.13.1" % "test",
 	"org.scala-lang.modules" %% "scala-pickling" % "0.10.1" % "test"
 	)
 
-lazy val root = Project("bitcoin-akka-tutorial", file("."))
+addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0-M5" cross CrossVersion.full)
+
+lazy val macros = Project("bitcoin-akka-tutorial-macros", file("macros"))
+lazy val root = Project("bitcoin-akka-tutorial", file(".")).dependsOn(macros)
 
 test in assembly := {}
 

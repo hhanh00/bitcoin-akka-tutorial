@@ -12,6 +12,7 @@ import akka.io.Tcp._
 import akka.io.{IO, Tcp}
 import akka.util.{ByteString, Timeout}
 import com.typesafe.config.Config
+import org.apache.commons.codec.binary.Hex
 import org.bitcoinakka.BitcoinMessage._
 import org.slf4j.LoggerFactory
 
@@ -40,15 +41,16 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
   startWith(Initial, HandshakeData(None, false))
 
   setTimer("handshake", StateTimeout, timeout, false)
-  messageHandler ! Version(BitcoinMessage.version, local, remote, 0L, "Bitcoin-akka", myHeight, 1.toByte)
+  val now = Instant.now
+  messageHandler ! Version(BitcoinMessage.version, 1L, now.getEpochSecond, local, remote, Random.nextLong(), "Bitcoin-akka", myHeight)
 
   when(Initial) {
     case Event(v: Version, d: HandshakeData) =>
       log.info(s"Connection from ${v.userAgent}")
-      messageHandler ! Verack
+      messageHandler ! Verack()
       checkHandshakeFinished(d copy (height = Some(v.height)))
 
-    case Event(Verack, d: HandshakeData) =>
+    case Event(Verack(), d: HandshakeData) =>
       checkHandshakeFinished(d copy (ackReceived = true))
   }
 
@@ -60,7 +62,7 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
       stay using ReplyToData(sender)
 
     case Event(gb: GetBlocks, _) =>
-      val gbMessage = GetBlockData(gb.hsd.map(_.blockHeader.hash))
+      val gbMessage = GetBlockData(gb.hsd.map(_.blockHeader.hash)).toGetData()
       messageHandler ! gbMessage
       log.info(s"Peer received request to download ${gb.hsd.map(hsd => hashToString(hsd.blockHeader.hash))}")
       setTimer("getblocks", StateTimeout, timeout, false)
@@ -96,22 +98,18 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
       messageHandler ! m
       stay
 
-    case Event(bm: BitcoinMessage, _) =>
-      log.info(s"Received ${bm}")
-      stay
-
     case Event(_: ConnectionClosed, _) =>
-      log.info("Peer disconnected")
+      log.debug("Peer disconnected")
       context stop self
       stay
 
     case Event(StateTimeout, _) =>
-      log.info("Peer timeout")
+      log.debug("Peer timeout")
       context stop self
       stay
 
     case Event(GetTx(hash), _) =>
-      messageHandler ! GetTxData(List(hash))
+      messageHandler ! GetTxData(List(hash)).toGetData()
       stay
 
     case Event(invEntry: InvEntry, _) =>
@@ -122,13 +120,17 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
       messageHandler ! Inv(invs)
       invs = Nil
       stay
+
+    case Event(bm: BitcoinMessage, _) =>
+      log.info(s"Received ${bm}")
+      stay
   }
 
   onTransition {
     case Initial -> Ready =>
-      log.info("Handshake done")
+      log.debug("Handshake done")
       cancelTimer("handshake")
-      messageHandler ! GetAddr
+      messageHandler ! GetAddr()
       context.parent ! Handshaked(nextStateData.asInstanceOf[HandshakeData].height.get)
   }
 
@@ -236,7 +238,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       if (txPool.addUnconfirmedTx(tx).isDefined)
         peersConnected.keys foreach (_ ! InvEntry(1, tx.hash))
 
-    case GetHeaders(hashes, _) =>
+    case GetHeaders(_, hashes, _) =>
       hashes.map { h => blockchain.chain.dropWhile(!_.blockHeader.hash.sameElements(h)) }.find(!_.isEmpty).foreach { headers =>
         sender ! OutgoingMessage(Headers(headers.tail.map(_.blockHeader)))
       }
@@ -266,11 +268,10 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       peersAvailable = peersAvailable.updated(peerAddress.address.getHostString, p copy (timestamp = peerAddress.timestamp))
 
     case Start =>
-      log.info("Starting peer manager")
       tryConnect()
 
     case CommandFailed(c: Connect) =>
-      log.info(s"Connection to ${c.remoteAddress} failed")
+      log.debug(s"Connection to ${c.remoteAddress} failed")
       val peerHostString = c.remoteAddress.getHostString
       val peerId = peersConnecting(peerHostString)
       peersConnecting -= peerHostString
@@ -278,7 +279,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       tryConnect()
 
     case Connected(remote, local) =>
-      log.info(s"Connected to ${remote}")
+      log.debug(s"Connected to ${remote}")
       val connection = sender
       val peerHostString = remote.getHostString
       val peerId = peersConnecting.getOrElse(peerHostString, allocateNewId())
@@ -292,7 +293,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       val peer = sender
       val peerId = peersConnected(peer)
       peerStates = peerStates.updated(peerId, PeerState.Ready)
-      log.info(s"Handshake from ${peer}")
+      log.debug(s"Handshake from ${peer}")
       downloadManager.addPeer(peer)
       if (height > blockchain.chainRev.head.height)
         self ! SyncFromPeer(peer, zeroHash)
@@ -311,8 +312,8 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
 
     val targetConnectCount = settings.targetConnectCount
     val c = peerStates.size
-    log.info(s"Peers available = ${peersAvailable.values.filter(!_.used).size}")
-    log.info(s"Peers count = ${c} (connecting = ${peerCount(PeerState.Connecting)}, not handshaked = ${peerCount(PeerState.Connected)})")
+    log.debug(s"Peers available = ${peersAvailable.values.filter(!_.used).size}")
+    log.debug(s"Peers count = ${c} (connecting = ${peerCount(PeerState.Connecting)}, not handshaked = ${peerCount(PeerState.Connected)})")
     if (c < targetConnectCount) {
       val ps = peersAvailable.values.filter(p => !p.used).toList.take(targetConnectCount-c)
       for { p <- ps } {
@@ -378,18 +379,18 @@ class MessageHandlerActor(connection: ActorRef) extends Actor with MessageHandle
   private def parse(mh: MessageHeader): List[BitcoinMessage] = {
     mh.command match {
       case "version" => List(Version.parse(mh.payload))
-      case "verack" => List(Verack)
+      case "verack" => List(Verack())
       case "headers" => List(Headers.parse(mh.payload))
       case "block" => List(Block.parse(mh.payload))
       case "inv" => List(IncomingMessage(Inv.parse(mh.payload)))
       case "addr" => List(IncomingMessage(Addr.parse(mh.payload)))
-      case "tx" => List(IncomingMessage(Tx.parse(mh.payload.iterator)))
+      case "tx" => List(IncomingMessage(Tx.parseBI(mh.payload.iterator)))
       case "getheaders" => List(IncomingMessage(GetHeaders.parse(mh.payload)))
       case "getdata" =>
-        val (getTxData, getBlockData) = GetData.parse(mh.payload)
+        val gd = GetData.parse(mh.payload)
+        val (getTxData, getBlockData) = (new GetTxData(gd.invs.filter(_.tpe == 1).map(_.hash)), new GetBlockData(gd.invs.filter(_.tpe == 2).map(_.hash)))
         List(getTxData, getBlockData).filter(!_.hashes.isEmpty).map(IncomingMessage(_))
-      case "ping" => List(PingPong.parse(mh.payload, Ping).asInstanceOf[Ping])
-      // case "reject" => List(Reject.parse(mh.payload)) // Skip reject messages (too many of them)
+      case "ping" => List(Ping.parse(mh.payload))
       case _ => Nil
     }
   }
@@ -436,7 +437,7 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
     val p = Promise[Headers]()
     context.actorOf(Props(new Actor {
       context watch syncPeer
-      syncPeer ! GetHeaders(locators, zeroHash)
+      syncPeer ! GetHeaders(BitcoinMessage.version, locators, zeroHash)
 
       def receive: Receive = {
         case headers: Headers =>
@@ -521,12 +522,12 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
         val hashToHSD = hsd.map(h => h.blockHeader.hash.wrapped -> h).toMap
 
         def internalReceive(state: DownloaderState): Receive = {
-          log.info(s"${state}")
+          log.debug(s"${state}")
           checkCompleted(self)(state)
 
           {
             case AddPeer(peer) =>
-              log.info(s"Adding peer ${peer}")
+              log.debug(s"Adding peer ${peer}")
               context watch peer
               context become internalReceive((add(peer) andThen assignTask(self))(state))
 
@@ -535,7 +536,7 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
               context become internalReceive((receiveBlock(peer, block) andThen completeWorker(peer, self))(state))
 
             case Terminated(peer) =>
-              log.info(s"Peer ${peer} terminated")
+              log.debug(s"Peer ${peer} terminated")
               context become internalReceive((failWorker(peer) andThen assignTask(self))(state))
 
             case DownloadFinished =>
@@ -548,12 +549,12 @@ class DownloadManager(context: ActorRefFactory)(implicit settings: AppSettingsIm
         context become internalReceive(assignTaskToAll(downloadState))
 
       case AddPeer(peer) =>
-        log.info(s"Adding peer ${peer}")
+        log.debug(s"Adding peer ${peer}")
         context watch peer
         context become idleReceive(addIdle(peer)(state))
 
       case Terminated(peer) =>
-        log.info(s"Peer ${peer} terminated")
+        log.debug(s"Peer ${peer} terminated")
         context become idleReceive(removeIdle(peer)(state))
     }
   }))

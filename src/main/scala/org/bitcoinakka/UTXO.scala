@@ -22,7 +22,7 @@ case class UTxOut(txOut: TxOut, height: Option[Int]) extends ByteOrderImplicit {
 }
 object UTxOut extends ByteOrderImplicit {
   def parse(bi: ByteIterator) = {
-    val txOut = TxOut.parse(bi)
+    val txOut = TxOut.parseBI(bi)
     val height = bi.getInt
     UTxOut(txOut, if (height == 0) None else Some(height))
   }
@@ -105,7 +105,7 @@ object UTXO {
   type UTXOEntryList = List[UTXOEntry]
 
   def ofTx(tx: Tx, isCoinbase: Boolean, height: Int): UTXOEntryList = {
-    val deleted = if (!isCoinbase) tx.txIns.map(txIn => UTXOEntry(txIn.prevOutPoint, None)) else Array.empty[UTXOEntry]
+    val deleted = if (!isCoinbase) tx.txIns.map(txIn => UTXOEntry(txIn.prevOutPoint, None)) else List.empty[UTXOEntry]
     val added = tx.txOuts.zipWithIndex.map { case (txOut, i) =>
       val outpoint = OutPoint(tx.hash, i)
       val utxo = UTxOut(txOut, if (isCoinbase) Some(height) else None)

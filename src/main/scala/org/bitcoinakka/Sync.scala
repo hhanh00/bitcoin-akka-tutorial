@@ -386,7 +386,7 @@ class BlockStore(settings: AppSettingsImpl) {
     val bi = ByteString(bb).iterator
     val size = bi.getInt
     List.range(0, size).map { _ =>
-      val key = OutPoint.parse(bi)
+      val key = OutPoint.parseBI(bi)
       log.debug(s"Undo Read> ${key}")
       val hasValue = bi.getByte
       val value =
