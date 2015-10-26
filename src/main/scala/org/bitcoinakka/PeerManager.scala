@@ -10,6 +10,7 @@ import akka.event.LoggingReceive
 import akka.util.Timeout
 import com.typesafe.config.Config
 
+import scala.collection.JavaConversions._
 import scala.concurrent.{Promise, Future}
 import scala.concurrent.duration._
 import akka.actor._
@@ -459,12 +460,20 @@ object DownloadManager {
   type Task = List[HeaderSyncData]
 }
 
+case class BlockFilesConfig(path: String, start: Int, checkpoints: List[Int])
 class AppSettingsImpl(config: Config) extends Extension {
   val targetConnectCount = config.getInt("targetConnectCount")
   val bitcoinDb = config.getString("bitcoinDb")
   val batchSize = config.getInt("batchSize")
   val blockBaseDir = config.getString("blockBaseDir")
   val baseDir = config.getString("baseDir")
+
+  val blockFilesConfig = config.getConfig("blockFiles")
+  val path = blockFilesConfig.getString("path")
+  val checkpoints = blockFilesConfig.getIntList("checkpoints")
+  val start = blockFilesConfig.getInt("start")
+  val saveBlocksConfig = config.getConfig("saveBlocks")
+  val blockFiles = BlockFilesConfig(path, start, checkpoints.map(_.toInt).toList)
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings
