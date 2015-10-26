@@ -108,13 +108,16 @@ object Consensus {
 
   def bip34(script: => Script, height: Int): Option[Boolean] = {
     for { _ <- (script.length >= 2 && script.length <= 100).option(()) } yield {
-      val len = script(0)
-      val bb = ByteBuffer.allocate(4)
-      bb.order(ByteOrder.LITTLE_ENDIAN)
-      bb.put(script, 1, len)
-      bb.flip()
-      bb.limit(4)
-      bb.getInt == height
+      if (Blockchain.checkBip34) {
+        val len = script(0)
+        val bb = ByteBuffer.allocate(4)
+        bb.order(ByteOrder.LITTLE_ENDIAN)
+        bb.put(script, 1, len)
+        bb.flip()
+        bb.limit(4)
+        bb.getInt == height
+      }
+      else true
     }
   }
 

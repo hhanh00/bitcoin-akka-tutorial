@@ -52,6 +52,7 @@ trait BitcoinNetParams {
   val genesisHash: WHash
   val genesisBlockHeader: BlockHeader
   val firstDifficultyAdjustment: Int
+  val checkBip34: Boolean
 }
 object MainNet extends BitcoinNetParams {
   val magic = 0xD9B4BEF9
@@ -59,6 +60,7 @@ object MainNet extends BitcoinNetParams {
   val genesisBytes = Hex.decodeHex("0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c".toCharArray)
   val genesisBlockHeader = BlockHeader.parse(ByteString(genesisBytes).iterator, genesisHash.array, false)
   val firstDifficultyAdjustment = 32256
+  val checkBip34 = true
 }
 object RegTestNet extends BitcoinNetParams {
   val magic = 0xDAB5BFFA
@@ -66,6 +68,7 @@ object RegTestNet extends BitcoinNetParams {
   val genesisBlockHeader = BlockHeader(genesisHash.array, 1, zeroHash, hashFromString("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"),
     Instant.ofEpochSecond(1296688602), 545259519, 2, 0)
   val firstDifficultyAdjustment = 0
+  val checkBip34 = false
 }
 case class Blockchain(chainRev: List[HeaderSyncData]) {
   def currentTip = chainRev.head
@@ -84,6 +87,7 @@ object Blockchain {
   val genesisHash = netParams.genesisHash
   val genesisBlockHeader = netParams.genesisBlockHeader
   val firstDifficultyAdjustment = netParams.firstDifficultyAdjustment
+  val checkBip34 = netParams.checkBip34
 }
 
 class TxPool(db: UTXODb, currentTip: HeaderSyncData) {
