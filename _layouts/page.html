@@ -33,86 +33,25 @@
         <div id="navbar" class="navbar-collapse collapse">
           <ul class="nav navbar-nav">
             <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Installation <span class="caret"></span></a>
+                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Before you start<span class="caret"></span></a>
                 <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/installation/build.html">Build</a></li>
-                    <li><a href="{{site.baseurl}}/installation/setup.html">Setup</a></li>
-                    <li><a href="{{site.baseurl}}/installation/console.html">Console Output</a></li>
-                    <li><a href="{{site.baseurl}}/installation/synchronization.html">Synchronization</a></li>
+                    <li><a href="{{site.baseurl}}/before/build.html">Build</a></li>
+                    <li><a href="{{site.baseurl}}/before/ide.html">IDE</a></li>
                 </ul>
             </li>
             <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Code<span class="caret"></span></a>
+                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Handshake<span class="caret"></span></a>
                 <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/code/components.html">Components</a></li>
-                    <li><a href="{{site.baseurl}}/code/bitcoin-model.html">Bitcoin Data Model</a></li>
-                    <li><a href="{{site.baseurl}}/code/akka.html">Akka</a></li>
-                    <li><a href="{{site.baseurl}}/code/scala.html">Scala</a></li>
-                </ul>
-            </li>
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Network<span class="caret"></span></a>
-                <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/messages/parsing.html">Parsing</a></li>
-                    <li><a href="{{site.baseurl}}/messages/payload.html">Payload</a></li>
-                    <li><a href="{{site.baseurl}}/messages/helpers.html">Helper functions</a></li>
-                    <li><a href="{{site.baseurl}}/network/connection.html">Peer Connection</a></li>
-                    <li><a href="{{site.baseurl}}/network/fsm.html">State Machine</a></li>
-                    <li><a href="{{site.baseurl}}/network/version.html">Version</a></li>
-                    <li><a href="{{site.baseurl}}/network/message-parser.html">Message Parser</a></li>
-                    <li><a href="{{site.baseurl}}/network/handshake.html">Handshake</a></li>
-                </ul>
-            </li>
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Sync<span class="caret"></span></a>
-                <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/sync/workflow.html">Workflow</a></li>
-                    <li><a href="{{site.baseurl}}/sync/messages.html">Sync Messages</a></li>
-                    <li><a href="{{site.baseurl}}/sync/api.html">API</a></li>
-                    <li><a href="{{site.baseurl}}/sync/communication.html">Peer Communication</a></li>
-                    <li class="divider"></li>
-                    <li><a href="{{site.baseurl}}/sync/integration.html">Integration</a></li>
-                    <li><a href="{{site.baseurl}}/sync/save-headers.html">Save headers to database</a></li>
-                    <li><a href="{{site.baseurl}}/sync/save-blocks.html">Save blocks to disk</a></li>
-                    <li><a href="{{site.baseurl}}/sync/peer-pool.html">Peer pool</a></li>
-                    <li><a href="{{site.baseurl}}/sync/block-downloader.html">Swarm block download</a></li>
-                    <li class="divider"></li>
-                    <li><a href="{{site.baseurl}}/sync/fault-tolerance.html">Handling time outs and failures</a></li>
-                </ul>
-            </li>
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">UTXO<span class="caret"></span></a>
-                <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/utxo/blockstore.html">Save Blocks</a></li>
-                    <li><a href="{{site.baseurl}}/utxo/api.html">API</a></li>
-                    <li><a href="{{site.baseurl}}/utxo/inmem.html">In Memory</a></li>
-                    <li><a href="{{site.baseurl}}/utxo/leveldb.html">LevelDb</a></li>
-                    <li><a href="{{site.baseurl}}/utxo/undo.html">Undo Records</a></li>
-                    <li><a href="{{site.baseurl}}/utxo/save-undo.html">Save Undo blocks</a></li>
-                    
-                </ul>
-            </li>
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Consensus<span class="caret"></span></a>
-                <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/consensus/forks.html">Forks</a></li>
-                    <li><a href="{{site.baseurl}}/consensus/attach.html">Attach chain</a></li>
-                    <li><a href="{{site.baseurl}}/consensus/header-validation.html">Header validation</a></li>
-                    <li><a href="{{site.baseurl}}/consensus/block-validation.html">Block validation</a></li>
-                    <li><a href="{{site.baseurl}}/consensus/tx-validation.html">Transaction validation</a></li>
-                    <li><a href="{{site.baseurl}}/consensus/misc.html">Misc Rules</a></li>
-                    <li><a href="{{site.baseurl}}/consensus/update-main.html">Update main chain</a></li>
-                </ul>
-            </li>
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Mem pool<span class="caret"></span></a>
-                <ul class="dropdown-menu" role="menu">
-                    <li><a href="{{site.baseurl}}/mempool/temp-utxo.html">Temporary UTXO</a></li>
-                    <li><a href="{{site.baseurl}}/mempool/verify.html">Verify</a></li>
-                    <li><a href="{{site.baseurl}}/mempool/relay.html">Relay</a></li>
-                    <li class="divider"></li>
-                    <li><a href="{{site.baseurl}}/finish/import-export.html">Import/Export</a></li>
-                    <li><a href="{{site.baseurl}}/finish/config.html">Configuration</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/header.html">Message Header Parser</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/frame.html">Frames</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/message.html">Messages</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/checksum.html">Checksum</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/primitive.html">Primitive Types</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/connect.html">Connect to a Peer</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/peer.html">Peer</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/parse-handshake.html">Handshake Messages</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/integration.html">Integration</a></li>
+                    <li><a href="{{site.baseurl}}/handshake/handshake.html">Handshake</a></li>
                 </ul>
             </li>
           </ul>
@@ -132,6 +71,7 @@
         <ul class="site-footer-links">
         <li><a href="{{site.baseurl}}/README.html">Read Me</a></li>
         <li><a href="https://github.com/hhanh00/bitcoin-akka">Bitcoin-akka on Github</a></li>
+        <li>Commit: <code>{{page.sha}}</code></li>
         </ul>
       </div>
     </footer>    

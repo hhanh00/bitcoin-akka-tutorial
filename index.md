@@ -4,23 +4,35 @@ layout: page
 
 # What is Bitcoin-Akka ?
 
-Bitcoin-akka is a "nearly" full node alternate implementation of the Bitcoin Core client in Scala using the Akka framework. It is aimed to be readable and serve as an introduction to functional programming and peer-to-peer applications in a real environment.
+Bitcoin-akka is a minimalistic but nearly fully compliant implementation of the Bitcoin protocol in Scala using the Akka library.
+It runs as a server node, playing a similar role to `Bitcoin Core`, the reference implementation.
 
-It should play nice with the bitcoin network. It will not emit ill-formed messages or in general violate the peer-to-peer protocol. In addition, it helps the network by:
+Before going further, here's the standard disclaimer:
 
-- keeping up with the blockchain
-- verifying blocks and transactions
-- relaying good data
+> I claim no responsibility if you lose money by using this software. It is provided for educational purposes only.
 
-But its main purpose is to have fun coding. If you are looking for a care-free client, this is not it. I recommend the core client `Bitcoin Core`. It has many additional features and is the reference implementation. In bitcoin-akka, we want to get by with the minimal amount of code to get something nice and functional but it will require some elbow grease.
+Especially true since Bitcoin has real money equivalence. 
 
-At the end, you will have a better understanding of the inner workings of Bitcoin as a technology and hopefully have a good taste of the Reactive style of programming.
+That being said, care has been taken in replicating the same behavior as of Bitcoin Core. Bitcoin-akka passes the same [regression tests][1]
+and leverage the consensus library from [Bitcoin Core][2] for transaction verification.
 
-Finally, bitcoin-akka is a small project. Altogether, it has less than 2000 lines of code with nearly 1/4 of it straightforward serialization/deserialization of messages. Once you start reading it, it's practically over! Nevertheless, it passes the bitcoin core [regression tests](https://github.com/TheBlueMatt/test-scripts).
+Nonetheless, it remains an accademic/educational project aiming to demonstrate the principles of Bitcoin and how to apply them
+in a concrete environment without a large amount of code (BTC-akka has below 1700 LOC)
 
-I organized this walkthrough as a tutorial, assuming that you have no prior experience in Scala. You should have some programming experience. For example, you know what's an IDE and you are comfortable with the command line. 
+As for the features, here's a short list:
 
-> As usual, the standard disclaimer applies here. I claim no responsibility if you lose money by
-using this software. It is provided for educational purposes only.
+- Automatically synchronizes with the blockchain with headers first and parellel block download
+- Maintain database of unspent outputs: verifies and relays unconfirmed transactions
+- Import/Export blockchain
 
-Grab a chair, fire up your command prompt and let's get started.
+The project is structured as a tutorial with each step associated with a page and a commit. There are 4 milestones before
+the end:
+
+- "handshake": It connects to a peer and completes the handshake phase. The two nodes are ready to communicate,
+- "download": It requests the blockchain and can download headers/blocks,
+- "persist": It keeps the data on disk and can be restarted without repeating the same tasks,
+- "validate": It checks that the data is correct per protocol rules,
+- "final": It is finished!
+
+[1]: https://github.com/TheBlueMatt/test-scripts
+[2]: https://github.com/bitcoin/bitcoin
