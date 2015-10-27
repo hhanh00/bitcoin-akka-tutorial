@@ -54,6 +54,11 @@
                     <li><a href="{{site.baseurl}}/handshake/handshake.html">Handshake</a></li>
                 </ul>
             </li>
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">Download<span class="caret"></span></a>
+                <ul class="dropdown-menu" role="menu">
+                </ul>
+            </li>
           </ul>
         </div><!--/.nav-collapse -->
       </div>
@@ -69,9 +74,10 @@
     <footer class="footer">
       <div class="container">
         <ul class="site-footer-links">
-        <li><a href="{{site.baseurl}}/README.html">Read Me</a></li>
-        <li><a href="https://github.com/hhanh00/bitcoin-akka">Bitcoin-akka on Github</a></li>
+        <li><a href="https://github.com/hhanh00/bitcoin-akka-tutorial">Bitcoin-akka on Github</a></li>
+        {% if page.sha %}
         <li>Commit: <code>{{page.sha}}</code></li>
+        {% endif %}
         </ul>
       </div>
     </footer>    
