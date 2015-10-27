@@ -17,3 +17,5 @@ In one of the very late commits, we will generate most of the boilerplate serial
 manually written.
 
 Let's move to something more interesting: [Integrate message parser]({{site.baseurl}}/handshake/integration.html)
+
+[1]: https://en.bitcoin.it/wiki/Protocol_documentation#version
