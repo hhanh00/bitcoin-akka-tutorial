@@ -1,4 +1,4 @@
-baseurl: /bitcoin-akka
+baseurl: /bitcoin-akka-tutorial
 markdown: redcarpet
 redcarpet:
     extensions: ["no_intra_emphasis", "tables", "fenced_code_blocks", "with_toc_data"]
