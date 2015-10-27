@@ -1,11 +1,8 @@
 @startuml message-classes.png
 
-BitcoinMessage <|-- Version
-BitcoinMessage <|-- Verack
 BitcoinMessage <|-- GetHeaders
 BitcoinMessage <|-- Headers
 BitcoinMessage <|-- GetData
-BitcoinMessage <|-- BlockHeader
 BitcoinMessage <|-- Block
 
 @enduml
