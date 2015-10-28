@@ -43,3 +43,8 @@ trait MessageHandler {
     messages
   }
 }
+
+case class Blockchain(chainRev: List[HeaderSyncData]) {
+  def currentTip = chainRev.head
+  val chain = chainRev.reverse
+}
