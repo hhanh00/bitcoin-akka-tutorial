@@ -115,3 +115,5 @@ Then it continued syncing because there are more blocks. This time it is pulling
 It will keep going on until it is fully synced. However, there isn't much point in doing so since all the block data is dropped. Headers
 are in the database though.
 
+In the next section, we are starting a new milestone by [saving]({{site.baseurl}}/utxo/save.html) downloaded 
+blocks to disk.

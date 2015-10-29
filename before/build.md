@@ -90,7 +90,8 @@ now. Besides, there are much better ways to get the blockchain than that.
 
 Download a torrent that has a recent blockchain file or get it from the web or better yet find someone who has it and is willing to make
 a copy for you. The blockchain is reaching 50 GB - unless you have a uber web connection - downloading it will take you days.
+Then you can [import][1] it.
 
 Next: [IDE]({{site.baseurl}}/before/ide.html)
 
-TODO: Add link towards Import/Export section when it's available.
+[1]: {{site.baseurl}}/utxo/import.html
