@@ -34,5 +34,8 @@ the end:
 - "validate": It checks that the data is correct per protocol rules,
 - "final": It is finished!
 
+At the bottom of every page, you have a commit hash. I recommend that you sync the project to it because I won't
+necessarily cover every aspect of the commit. The project should always build but it may not do anything useful yet.
+
 [1]: https://github.com/TheBlueMatt/test-scripts
 [2]: https://github.com/bitcoin/bitcoin
