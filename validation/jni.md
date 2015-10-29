@@ -16,6 +16,9 @@ It will stay on the fork that has the highest proof of work and maintain a datab
 
 The next milestone will be the final one. We will finish the small remaining tasks:
 
-- relay transactions
+- [relay transactions]({{site.baseurl}}/misc/relay.html)
 - accept incoming connections
 - auto generate parsers and serializers for the Bitcoin messages
+- and also run the [Bitcoin Core Regression Tests][1]
+
+[1]: https://github.com/TheBlueMatt/test-scripts
