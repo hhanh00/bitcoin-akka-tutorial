@@ -35,7 +35,7 @@ trait BitcoinMessage extends ByteOrderImplicit {
 
 object BitcoinMessage extends ByteOrderImplicit {
   val magic = 0xD9B4BEF9
-  val version = 70000
+  val version = 70001
   type Hash = Array[Byte]
   type WHash = collection.mutable.WrappedArray.ofByte
   type Script = Array[Byte]
@@ -88,7 +88,7 @@ object BitcoinMessage extends ByteOrderImplicit {
         case _: Inet6Address =>
       }
       bb.putBytes(addr.getAddress)
-      bb.putShort(address.getPort)
+      bb.putShort(java.lang.Short.reverseBytes(address.getPort.toShort))
     }
     def putBlockHeader(bh: BlockHeader) = {
       bb.append(bh.toByteString())

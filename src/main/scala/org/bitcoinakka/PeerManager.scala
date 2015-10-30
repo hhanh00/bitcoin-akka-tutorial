@@ -26,13 +26,11 @@ object PeerState extends Enumeration {
   val Connecting, Connected, Ready = Value
 }
 
-class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAddress) extends FSM[Peer.State, Peer.Data] with ActorLogging {
+class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAddress, myHeight: Int) extends FSM[Peer.State, Peer.Data] with ActorLogging {
   import Peer._
 
   implicit val ec = context.dispatcher
   val messageHandler = context.actorOf(Props(new MessageHandlerActor(connection)))
-
-  val myHeight = 0
 
   var invs = List.empty[InvEntry]
   val invBroadcastCancel = context.system.scheduler.schedule(invBroadcast, invBroadcast, self, InvBroadcast)
@@ -42,7 +40,7 @@ class Peer(connection: ActorRef, local: InetSocketAddress, remote: InetSocketAdd
 
   setTimer("handshake", StateTimeout, timeout, false)
   val now = Instant.now
-  messageHandler ! Version(BitcoinMessage.version, 1L, now.getEpochSecond, local, remote, Random.nextLong(), "Bitcoin-akka", myHeight)
+  messageHandler ! Version(BitcoinMessage.version, 1L, now.getEpochSecond, remote, local, Random.nextLong(), "/Bitcoin-akka/", myHeight)
 
   when(Initial) {
     case Event(v: Version, d: HandshakeData) =>
@@ -283,7 +281,7 @@ class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPe
       val connection = sender
       val peerHostString = remote.getHostString
       val peerId = peersConnecting.getOrElse(peerHostString, allocateNewId())
-      val peer = context.actorOf(Props(new Peer(connection, local, remote)))
+      val peer = context.actorOf(Props(new Peer(connection, local, remote, blockchain.currentTip.height)))
       context watch peer
       peersConnecting -= peerHostString
       peersConnected += peer -> peerId
