@@ -1,6 +1,6 @@
 ---
 layout: page
-sha: 8d14eb80744d20d1384076ebe47d200ba6b60cc8
+sha: 90aeca2d4a1dbc59a8ed05939a17d861ffa63510
 ---
 
 # Message Serializer Generation
