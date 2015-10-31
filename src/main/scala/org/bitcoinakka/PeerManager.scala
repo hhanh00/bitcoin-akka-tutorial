@@ -173,18 +173,14 @@ object Peer {
 
 case class PeerAddress(timestamp: Instant, address: InetSocketAddress, used: Boolean)
 
-class PeerManager(settings: AppSettingsImpl) extends Actor with Sync with SyncPersistDb with Stash with ActorLogging {
+class PeerManager(val appSettings: AppSettingsImpl) extends Actor with Sync with SyncPersistDb with Stash with ActorLogging {
   import Peer._
   import PeerManager._
   import context.system
   implicit val timeout = Timeout(1.hour)
   implicit val ec = context.dispatcher
-  implicit val appSettings = settings
 
-  val connection = DriverManager.getConnection(settings.bitcoinDb)
-  connection.setAutoCommit(false)
-
-  val db = new LevelDbUTXO(settings)
+  val db = new LevelDbUTXO(appSettings)
 
   blockchain = loadBlockchain()
 
@@ -567,7 +563,6 @@ object DownloadManager {
 case class BlockFilesConfig(path: String, start: Int, checkpoints: List[Int])
 class AppSettingsImpl(config: Config) extends Extension {
   val targetConnectCount = config.getInt("targetConnectCount")
-  val bitcoinDb = config.getString("bitcoinDb")
   val batchSize = config.getInt("batchSize")
   val blockBaseDir = config.getString("blockBaseDir")
   val baseDir = config.getString("baseDir")

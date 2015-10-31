@@ -1,5 +1,6 @@
 package org.bitcoinakka
 
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.{Files, Path, Paths, StandardOpenOption}
@@ -11,9 +12,12 @@ import akka.util.{ByteString, ByteStringBuilder}
 import org.bitcoinakka.BitcoinMessage._
 import org.bitcoinakka.Consensus._
 import org.bitcoinakka.UTXO.UTXOEntryList
+import org.fusesource.leveldbjni.JniDBFactory
+import org.iq80.leveldb.Options
 import org.slf4j.LoggerFactory
 import resource._
 
+import akka.util.{ByteString, ByteIterator}
 import scala.collection.immutable.Queue
 import scala.concurrent.{ExecutionContext, Future}
 import scalaz.Free._
@@ -22,7 +26,7 @@ import scalaz.syntax.std.boolean._
 import scalaz.syntax.std.list._
 import scalaz.{EphemeralStream, OptionT, State, StateT, Trampoline}
 
-case class HeaderSyncData(blockHeader: BlockHeader, height: Int, pow: BigInt)
+@MessageMacro case class HeaderSyncData(blockHeader: BlockHeader, height: Int, pow: BigInt)
 
 trait SyncDataProvider {
   def getHeaders(locators: List[Hash]): Future[List[BlockHeader]]
@@ -33,6 +37,7 @@ trait SyncPersist {
   def saveBlockchain(chain: List[HeaderSyncData])
   def loadBlockchain(): Blockchain
   def setMainTip(newTip: Hash)
+  def getHeaderSync(hash: Hash): Option[HeaderSyncData]
 }
 
 case class ForkHasLessPOW(message: String) extends Exception(message)
@@ -249,75 +254,37 @@ trait Sync { self: SyncPersist =>
 
 trait SyncPersistDb extends SyncPersist {
   private val log = LoggerFactory.getLogger(getClass)
-  val connection: Connection
-  lazy val saveHeaderSyncStatement = connection.prepareStatement(
-    "INSERT IGNORE INTO headers(hash, header, height, pow) VALUES (?, ?, ?, ?)")
+  val appSettings: AppSettingsImpl
+
+  val options = new Options()
+  options.createIfMissing(true)
+  val dbDir = new File(s"${appSettings.baseDir}/blockchain")
+  dbDir.mkdirs()
+  private val db = JniDBFactory.factory.open(dbDir, options)
+
   def saveBlockchain(chain: List[HeaderSyncData]) = {
-    val paddedPowBytes: Array[Byte] = new Array(32)
     for { h <- chain } {
-      saveHeaderSyncStatement.setBytes(1, h.blockHeader.hash)
-      saveHeaderSyncStatement.setBytes(2, h.blockHeader.toByteString().toArray)
-      saveHeaderSyncStatement.setInt(3, h.height)
-      val powBytes = h.pow.toByteArray
-      java.util.Arrays.fill(paddedPowBytes, 0, 32, 0.toByte)
-      Array.copy(powBytes, 0, paddedPowBytes, 32-powBytes.length, powBytes.length)
-      saveHeaderSyncStatement.setBytes(4, paddedPowBytes)
-      saveHeaderSyncStatement.addBatch()
-    }
-    saveHeaderSyncStatement.executeBatch()
-    connection.commit()
-  }
-
-  def setMainTip(newTip: Hash) = {
-    log.info(s"New tip = ${hashToString(newTip)}")
-
-    managed(connection.prepareStatement("INSERT INTO properties(name, value) VALUES ('main', ?) " +
-      "ON DUPLICATE KEY UPDATE value = VALUES(value)")).acquireAndGet { s =>
-      s.setString(1, hashToString(newTip))
-      s.execute()
-    }
-    connection.commit()
-  }
-
-  lazy val selectHeaderSyncStatement = connection.prepareStatement(
-    "SELECT header, height, pow FROM headers WHERE hash = ?")
-  def getHeaderSync(hash: Hash): Option[HeaderSyncData] = {
-    selectHeaderSyncStatement.setBytes(1, hash)
-    (for {
-      rs <- managed(selectHeaderSyncStatement.executeQuery())
-    } yield rs) acquireAndGet { rs =>
-      if (rs.next()) {
-        val headerBytes = rs.getBytes(1)
-        val header = BlockHeader.parse(ByteString(headerBytes).iterator, hash, false)
-        val height = rs.getInt(2)
-        val powBytes = rs.getBytes(3)
-        val pow = BigInt(powBytes)
-        Some(HeaderSyncData(header, height, pow))
-      }
-      else None
+      val k = h.blockHeader.hash
+      val v = h.toByteString().toArray
+      db.put(k, v)
     }
   }
+
+  def setMainTip(newTip: Hash) = db.put(Array.empty, newTip)
+
+  def getHeaderSync(hash: Hash): Option[HeaderSyncData] = Option(db.get(hash)).map(v => HeaderSyncData.parse(ByteString(v)))
+
   def loadBlockchain(): Blockchain = {
-    var hash: Hash = null
-    (for {
-      s <- managed(connection.createStatement())
-      rs <- managed(s.executeQuery("SELECT value FROM properties WHERE name='main'"))
-    } yield rs) acquireAndGet { rs =>
-      while (rs.next()) {
-        val hashString = rs.getString(1)
-        hash = hashFromString(hashString)
-      }
-    }
-
+    val main = Option(db.get(Array.empty))
     val chainRev =
-      if (hash == null) {
-        val genesisChain = List(HeaderSyncData(Blockchain.genesisBlockHeader, 0, Blockchain.genesisBlockHeader.pow))
-        saveBlockchain(genesisChain)
-        setMainTip(Blockchain.genesisHash.array)
-        genesisChain
-      }
-      else {
-        EphemeralStream.unfold(hash)(h => getHeaderSync(h).map(hsd => (hsd, hsd.blockHeader.prevHash))).take(Consensus.difficultyAdjustmentInterval).toList
+      main match {
+        case Some(hash) =>
+          EphemeralStream.unfold(hash)(h => getHeaderSync(h).map(hsd => (hsd, hsd.blockHeader.prevHash))).take(Consensus.difficultyAdjustmentInterval).toList
+        case None =>
+          val genesisChain = List(HeaderSyncData(Blockchain.genesisBlockHeader, 0, Blockchain.genesisBlockHeader.pow))
+          saveBlockchain(genesisChain)
+          setMainTip(Blockchain.genesisHash.array)
+          genesisChain
       }
     Blockchain(chainRev)
   }

@@ -15,7 +15,7 @@ import scala.pickling.Defaults._
 import scala.pickling.binary.{BinaryPickle, StreamInput, _}
 import scalaz.StreamT
 
-class TestSync(settings: AppSettingsImpl, val connection: Connection, _db: UTXODb, blocksIterator: Iterator[Block])
+class TestSync(val appSettings: AppSettingsImpl, _db: UTXODb, blocksIterator: Iterator[Block])
   extends Sync with SyncPersistDb with SyncDataProvider {
   val log = LoggerFactory.getLogger(getClass)
   var testBlockchain: List[WHash] = null
@@ -76,7 +76,7 @@ class TestSync(settings: AppSettingsImpl, val connection: Connection, _db: UTXOD
   }
 
   implicit val db = _db
-  implicit val blockStore: BlockStore = new BlockStore(settings)
+  implicit val blockStore: BlockStore = new BlockStore(appSettings)
 }
 
 class SyncSpec extends FlatSpec with Matchers {
@@ -86,8 +86,6 @@ class SyncSpec extends FlatSpec with Matchers {
   val system = ActorSystem()
   implicit val settings = AppSettings(system)
   implicit val ec = system.dispatcher
-  val connection = DriverManager.getConnection(settings.bitcoinDb)
-  connection.setAutoCommit(false)
 
   val db = new InMemUTXODb(NopUTXODb)
 
@@ -100,7 +98,7 @@ class SyncSpec extends FlatSpec with Matchers {
   val blocksIterator = bcf.parse(blockFile).toIterator
   val checkList = p.unpickle[List[FullBlockCheck]]
 
-  val sync = new TestSync(settings, connection, db, blocksIterator)
+  val sync = new TestSync(settings, db, blocksIterator)
 
   "Sync trait" should "run regression tests" in {
     for { fbc <- checkList } {

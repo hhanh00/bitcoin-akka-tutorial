@@ -94,6 +94,13 @@ object BitcoinMessage extends ByteOrderImplicit {
       bb.append(bh.toByteString())
       bb.putVarInt(0)
     }
+    def putBigInt(bi: BigInt) = {
+      val paddedPowBytes: Array[Byte] = new Array(32)
+      val powBytes = bi.toByteArray
+      java.util.Arrays.fill(paddedPowBytes, 0, 32, 0.toByte)
+      Array.copy(powBytes, 0, paddedPowBytes, 32 - powBytes.length, powBytes.length)
+      bb.putBytes(paddedPowBytes)
+    }
   }
 
   implicit class ByteStringIteratorExt(bi: ByteIterator) {
@@ -135,6 +142,11 @@ object BitcoinMessage extends ByteOrderImplicit {
       val hashedPart = bi.clone.slice(0, 80).toArray[Byte]
       val blockHash = dsha(hashedPart)
       BlockHeader.parse(bi, blockHash, true)
+    }
+    def getBigInt: BigInt = {
+      val paddedPowBytes: Array[Byte] = new Array(32)
+      bi.getBytes(paddedPowBytes)
+      BigInt(paddedPowBytes)
     }
   }
 

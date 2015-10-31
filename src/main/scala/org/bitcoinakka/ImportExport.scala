@@ -19,8 +19,7 @@ class BlockchainFile {
   implicit val blockStore = new BlockStore(settings)
   val lastBlocks = mutable.Queue.empty[WHash]
   val db = new SyncPersistDb {
-    val connection = DriverManager.getConnection(settings.bitcoinDb)
-    connection.setAutoCommit(false)
+    val appSettings = settings
   }
 
   def r() = {
