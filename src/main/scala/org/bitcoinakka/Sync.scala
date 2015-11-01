@@ -1,6 +1,6 @@
 package org.bitcoinakka
 
-import java.io.File
+import java.io.{FileInputStream, FileOutputStream, File}
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.{Files, Path, Paths, StandardOpenOption}
@@ -309,13 +309,13 @@ class BlockStore(settings: AppSettingsImpl) {
   def saveBlock(block: Block, height: Int) = {
     val path = getBlockPath(block.header.hash, height)
     path.toFile.getParentFile.mkdirs()
-    managed(FileChannel.open(path, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).foreach { _.write(block.payload.toByteBuffer) }
+    managed(new FileOutputStream(path.toFile).getChannel).foreach { _.write(block.payload.toByteBuffer) }
   }
 
   def loadBlockBytes(hash: Hash, height: Int): Option[Array[Byte]] = {
     val path = getBlockPath(hash, height)
     Files.exists(path).option(()).map { _ =>
-      managed(FileChannel.open(path, StandardOpenOption.READ)).acquireAndGet { channel =>
+      managed(new FileInputStream(path.toFile).getChannel).acquireAndGet { channel =>
         val bb = ByteBuffer.allocate(channel.size.toInt)
         channel.read(bb)
         channel.close()
@@ -330,38 +330,39 @@ class BlockStore(settings: AppSettingsImpl) {
   def saveUndoBlock(hash: Hash, height: Int, undoList: UTXOEntryList): Unit = {
     val path = getBlockPath(hash, height, true)
     path.toFile.getParentFile.mkdirs()
-    val channel = FileChannel.open(path, StandardOpenOption.WRITE, StandardOpenOption.CREATE)
-    val bb = new ByteStringBuilder
-    bb.putInt(undoList.size)
-    undoList.foreach { entry =>
-      log.debug(s"Undo Write> ${entry.key}")
-      bb.append(entry.key.toByteString())
-      bb.putByte(if (entry.value.isDefined) 1.toByte else 0.toByte)
-      entry.value.foreach { v => bb.append(v.toByteString()) }
+    managed(new FileOutputStream(path.toFile).getChannel).foreach { channel =>
+      val bb = new ByteStringBuilder
+      bb.putInt(undoList.size)
+      undoList.foreach { entry =>
+        log.debug(s"Undo Write> ${entry.key}")
+        bb.append(entry.key.toByteString())
+        bb.putByte(if (entry.value.isDefined) 1.toByte else 0.toByte)
+        entry.value.foreach { v => bb.append(v.toByteString()) }
+      }
+      channel.write(bb.result().toByteBuffer)
     }
-    channel.write(bb.result().toByteBuffer)
-    channel.close()
   }
 
   def loadUndoBlock(hash: Hash, height: Int): UTXOEntryList = {
     val path = getBlockPath(hash, height, true)
-    val channel = FileChannel.open(path, StandardOpenOption.READ)
-    val bb = ByteBuffer.allocate(channel.size.toInt)
-    channel.read(bb)
-    channel.close()
-    bb.flip()
-    val bi = ByteString(bb).iterator
-    val size = bi.getInt
-    List.range(0, size).map { _ =>
-      val key = OutPoint.parseBI(bi)
-      log.debug(s"Undo Read> ${key}")
-      val hasValue = bi.getByte
-      val value =
-        if (hasValue != 0.toByte)
-          Some(UTxOut.parse(bi))
-        else
-          None
-      UTXOEntry(key, value)
+    managed(new FileInputStream(path.toFile).getChannel).acquireAndGet { channel =>
+      val bb = ByteBuffer.allocate(channel.size.toInt)
+      channel.read(bb)
+      channel.close()
+      bb.flip()
+      val bi = ByteString(bb).iterator
+      val size = bi.getInt
+      List.range(0, size).map { _ =>
+        val key = OutPoint.parseBI(bi)
+        log.debug(s"Undo Read> ${key}")
+        val hasValue = bi.getByte
+        val value =
+          if (hasValue != 0.toByte)
+            Some(UTxOut.parse(bi))
+          else
+            None
+        UTXOEntry(key, value)
+      }
     }
   }
 }

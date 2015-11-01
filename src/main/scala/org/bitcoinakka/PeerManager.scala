@@ -338,7 +338,6 @@ object PeerManager extends App {
 
   val log = LoggerFactory.getLogger(getClass)
 
-  Class.forName("com.mysql.jdbc.Driver")
   System.loadLibrary("consensus-jni")
 
   implicit val system = ActorSystem()

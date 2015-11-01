@@ -13,7 +13,6 @@ import scala.collection.mutable
 
 class BlockchainFile {
   val log = LoggerFactory.getLogger(getClass)
-  Class.forName("com.mysql.jdbc.Driver")
   val config = ConfigFactory.load()
   val settings = new AppSettingsImpl(config)
   implicit val blockStore = new BlockStore(settings)
