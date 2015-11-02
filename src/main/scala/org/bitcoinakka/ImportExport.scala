@@ -17,9 +17,8 @@ class BlockchainFile {
   val settings = new AppSettingsImpl(config)
   implicit val blockStore = new BlockStore(settings)
   val lastBlocks = mutable.Queue.empty[WHash]
-  val db = new SyncPersistDb {
-    val appSettings = settings
-  }
+  class Db(val appSettings: AppSettingsImpl) extends SyncPersistDb
+  val db = new Db(settings)
 
   def r() = {
     var lastHeader: HeaderSyncData = null
