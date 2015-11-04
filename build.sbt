@@ -7,6 +7,7 @@ version := "0.1.0-SNAPSHOT"
 libraryDependencies ++= Seq(
 	"com.typesafe.akka" %% "akka-actor" % "2.4.0",
 	"com.typesafe.akka" %% "akka-slf4j" % "2.4.0",
+	"com.typesafe.akka" %% "akka-stream-experimental" % "1.0",
 	"org.apache.commons" % "commons-lang3" % "3.3.2",
 	"commons-codec" % "commons-codec" % "1.10",
 	"org.scalaz" %% "scalaz-core" % "7.1.3",

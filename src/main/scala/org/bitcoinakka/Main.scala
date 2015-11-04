@@ -103,17 +103,12 @@ class TxPool(db: UTXODb, currentTip: HeaderSyncData) {
     pool = Map.empty
   }
 
-  def addUnconfirmedTx(tx: Tx): Option[Unit] = {
-    log.debug(s"Adding unconfirmed tx ${tx}")
-    for {
-      _ <- Consensus.checkTx(tx, -1, currentBlockHeaderData.height, currentBlockHeaderData.blockHeader.timestamp.getEpochSecond, memUTXO)
-    } yield {
-      pool = pool.updated(new WHash(tx.hash), Some(tx))
-    }
-  }
+  def checkUnconfirmedTx(tx: Tx): Option[Tx] =
+    Consensus.checkTx(tx, -1, currentBlockHeaderData.height, currentBlockHeaderData.blockHeader.timestamp.getEpochSecond, memUTXO).map(_ => tx)
+  def addUnconfirmedTx(tx: Tx) = { pool = pool.updated(tx.hash.wrapped, Some(tx)) }
 
   def doRequestTx(hash: Hash, peer: ActorRef) = {
-    val wHash = new WHash(hash)
+    val wHash = hash.wrapped
     if (!pool.contains(wHash)) {
       pool += wHash -> None
       peer ! Peer.GetTx(hash)

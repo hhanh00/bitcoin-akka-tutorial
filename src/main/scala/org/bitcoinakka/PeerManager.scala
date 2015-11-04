@@ -10,6 +10,8 @@ import akka.actor._
 import akka.event.LoggingReceive
 import akka.io.Tcp._
 import akka.io.{IO, Tcp}
+import akka.stream.{ActorMaterializer, OverflowStrategy}
+import akka.stream.scaladsl._
 import akka.util.{ByteString, Timeout}
 import com.typesafe.config.Config
 import org.apache.commons.codec.binary.Hex
@@ -218,6 +220,23 @@ class PeerManager(val appSettings: AppSettingsImpl) extends Actor with Sync with
       context.unbecome()
   }
 
+  case class ConfirmedTx(tx: Tx)
+  val x = Source.actorRef[Tx](100, OverflowStrategy.dropHead)
+  val y = Sink.actorRef(self, ())
+  val verifyTx = Flow[Tx].collect(Function.unlift(tx => txPool.checkUnconfirmedTx(tx))).map(tx => ConfirmedTx(tx))
+  val v: Flow[Tx, ConfirmedTx, Unit] = Flow() { implicit builder =>
+    import FlowGraph.Implicits._
+    val nThreads = settings.nCores
+    val dispatchTx = builder.add(Balance[Tx](nThreads))
+    val mergeTx = builder.add(Merge[ConfirmedTx](nThreads))
+    for (i <- 0 until nThreads) {
+      dispatchTx.out(i) ~> verifyTx ~> mergeTx.in(i)
+    }
+    (dispatchTx.in, mergeTx.out)
+  }
+  implicit val materializer = ActorMaterializer()(context)
+  val f = x.via(v).to(y).run()
+
   val commonReceive: Receive = LoggingReceive {
     case inv: Inv =>
       val peer = sender
@@ -228,9 +247,11 @@ class PeerManager(val appSettings: AppSettingsImpl) extends Actor with Sync with
         hash <- invTxs(inv)
       } txPool.doRequestTx(hash, peer)
 
-    case tx: Tx =>
-      if (txPool.addUnconfirmedTx(tx).isDefined)
-        peersConnected.keys foreach (_ ! InvEntry(1, tx.hash))
+    case tx: Tx => f ! tx
+
+    case ConfirmedTx(tx) =>
+      txPool.addUnconfirmedTx(tx)
+      peersConnected.keys foreach (_ ! InvEntry(1, tx.hash))
 
     case GetHeaders(_, hashes, _) =>
       hashes.map { h => blockchain.chain.dropWhile(!_.blockHeader.hash.sameElements(h)) }.find(!_.isEmpty).foreach { headers =>
@@ -574,6 +595,7 @@ class AppSettingsImpl(config: Config) extends Extension {
   val blockFiles = BlockFilesConfig(path, start, checkpoints.map(_.toInt).toList)
 
   val incomingPort = config.getInt("incomingPort")
+  val nCores = config.getInt("nCores")
 }
 object AppSettings extends ExtensionId[AppSettingsImpl] with ExtensionIdProvider {
   override def lookup = AppSettings
